@@ -1,0 +1,12 @@
+{
+  "name": "franke",
+  "private": true,
+  "workspaces": [
+    "app",
+    "relay"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w app",
+    "relay": "npm run start -w relay"
+  }
+}

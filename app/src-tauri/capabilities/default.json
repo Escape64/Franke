@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "log:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-read-dir",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    "fs:allow-rename",
+    "fs:allow-remove",
+    "fs:allow-watch",
+    "fs:allow-unwatch",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$HOME/FrankeVault" },
+        { "path": "$HOME/FrankeVault/**" },
+        { "path": "$HOME/FrankeVault/.franke" },
+        { "path": "$HOME/FrankeVault/.franke/**" }
+      ]
+    }
+  ]
+}

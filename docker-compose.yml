@@ -1,0 +1,14 @@
+# Self-host relay для Franke одной командой:
+#   docker compose up -d
+# После запуска укажите в клиенте адрес своего relay (VITE_RELAY_URL при сборке
+# или ?relay=ws://<host>:1234 в браузере). Relay «слепой» — контента не видит.
+services:
+  relay:
+    build: ./relay
+    image: franke-relay
+    container_name: franke-relay
+    ports:
+      - "${FRANKE_RELAY_PORT:-1234}:1234"
+    environment:
+      - PORT=1234
+    restart: unless-stopped

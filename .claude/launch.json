@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "franke-relay",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "relay"],
+      "port": 1234
+    },
+    {
+      "name": "franke-app",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 5173
+    }
+  ]
+}
