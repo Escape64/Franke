@@ -857,6 +857,55 @@ header .spacer {
   background: #d1d5db;
 }
 
+/* --- Всплывашка со списком участников --- */
+.participants-popover {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+  padding: 6px;
+}
+
+.participants-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 4px 8px 6px;
+}
+
+.participant {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  font-size: 14px;
+  border-radius: 6px;
+}
+
+.participant .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.participant-me {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.participants-empty {
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .status.online .indicator {
   background: #34c759;
 }

@@ -185,9 +185,13 @@ const renderStatus = () => {
   const connected = session.provider.wsconnected
   const peers = session.awareness.getStates().size
   statusEl.classList.toggle('online', connected)
-  const ro = session.canWrite ? '' : ' · только чтение'
+  const role = session.canWrite
+    ? ''
+    : session.canComment
+      ? ' · комментирование'
+      : ' · только чтение'
   statusText.textContent = connected
-    ? `онлайн · участников: ${peers}${session.share ? ' · 🔒' : ''}${ro}`
+    ? `онлайн · участников: ${peers}${session.share ? ' · 🔒' : ''}${role}`
     : 'нет связи с relay'
 }
 
@@ -196,6 +200,57 @@ const renderShareButton = () => {
   if (!btn) return
   btn.textContent = session?.share ? 'Ссылка' : 'Поделиться'
 }
+
+// --- Список участников ---
+// Клик по статусу («участников: N») открывает всплывашку с именами из awareness,
+// живо обновляемую. Повторный клик / клик вне — закрыть.
+let participantsPopover: HTMLElement | null = null
+
+function closeParticipants() {
+  participantsPopover?.remove()
+  participantsPopover = null
+}
+
+function toggleParticipants() {
+  if (participantsPopover) return closeParticipants()
+  if (!session) return
+  const pop = document.createElement('div')
+  pop.className = 'participants-popover'
+
+  const render = () => {
+    const states = session!.awareness.getStates()
+    const localId = session!.awareness.clientID
+    const rows = [...states.entries()].map(([id, st]) => {
+      const u = (st as { user?: { name?: string; color?: string } }).user ?? {}
+      const me = id === localId ? ' <span class="participant-me">(вы)</span>' : ''
+      return `<div class="participant"><span class="dot" style="background:${u.color ?? '#888'}"></span><span>${escapeHtml(u.name ?? 'аноним')}${me}</span></div>`
+    })
+    pop.innerHTML =
+      `<div class="participants-head">Участники · ${states.size}</div>` +
+      (rows.join('') || '<div class="participants-empty">пока никого</div>')
+  }
+  render()
+
+  const r = statusEl.getBoundingClientRect()
+  pop.style.top = `${r.bottom + 6}px`
+  pop.style.left = `${r.left}px`
+  document.body.appendChild(pop)
+  participantsPopover = pop
+
+  const onChange = () => participantsPopover && render()
+  session.awareness.on('change', onChange)
+  const onDocDown = (e: MouseEvent) => {
+    if (pop.contains(e.target as Node) || statusEl.contains(e.target as Node)) return
+    session?.awareness.off('change', onChange)
+    document.removeEventListener('mousedown', onDocDown)
+    closeParticipants()
+  }
+  setTimeout(() => document.addEventListener('mousedown', onDocDown), 0)
+}
+
+statusEl.style.cursor = 'pointer'
+statusEl.title = 'Показать участников'
+statusEl.addEventListener('click', toggleParticipants)
 
 let detachComments: (() => void) | null = null
 let detachSuggestions: (() => void) | null = null
@@ -225,12 +280,17 @@ async function activateSession(next: NoteSession, title: string) {
         onSelectionComment: (from, to) => startNewComment(from, to),
         onSelectionSuggest: (from, to) => startNewSuggestion(from, to)
       },
-      session.canWrite
+      session.canComment // кнопки «Комментировать»/«Предложить» — и комментатору
     ),
     suggestionsExtension()
   ]
+  // Правка текста — только редактору. Комментатору ставим лишь readOnly:
+  // правки блокируются, но выделение работает (иначе кнопки «Комментировать»/
+  // «Предложить», завязанные на выделение, не появятся). Читателю — полный
+  // editable=false: ему выделять нечего.
   if (!session.canWrite) {
-    extensions.push(EditorState.readOnly.of(true), EditorView.editable.of(false))
+    extensions.push(EditorState.readOnly.of(true))
+    if (!session.canComment) extensions.push(EditorView.editable.of(false))
   }
 
   view = new EditorView({
@@ -457,19 +517,24 @@ function suggestionCard(s: SuggestionView): HTMLElement {
   }
   card.appendChild(diff)
 
-  if (!session?.canWrite) return card // read-only: смотреть можно, решать нельзя
+  if (!session?.canComment) return card // читатель: только смотрит
 
   const actions = document.createElement('div')
   actions.className = 'comment-actions'
-  const accept = document.createElement('button')
-  accept.className = 'btn-primary'
-  accept.textContent = 'Принять'
-  accept.onclick = () => session && acceptSuggestion(session.ydoc, session.ytext, s.id)
+  // «Принять» применяет правку к тексту → только редактор (canWrite).
+  // «Отклонить» лишь убирает предложение → доступно и комментатору.
+  if (session.canWrite) {
+    const accept = document.createElement('button')
+    accept.className = 'btn-primary'
+    accept.textContent = 'Принять'
+    accept.onclick = () => session && acceptSuggestion(session.ydoc, session.ytext, s.id)
+    actions.appendChild(accept)
+  }
   const reject = document.createElement('button')
   reject.className = 'btn-secondary'
   reject.textContent = 'Отклонить'
   reject.onclick = () => session && rejectSuggestion(session.ydoc, s.id)
-  actions.append(accept, reject)
+  actions.appendChild(reject)
   card.appendChild(actions)
   return card
 }
@@ -735,7 +800,7 @@ function threadCard(t: ThreadView): HTMLElement {
     card.appendChild(msg)
   }
 
-  if (!session?.canWrite) return card // read-only: без ответов и действий
+  if (!session?.canComment) return card // читатель: без ответов и действий
 
   const actions = document.createElement('div')
   actions.className = 'comment-actions'
@@ -940,12 +1005,17 @@ function openShareDialog(
           <input class="share-link" readonly value="${inviteLink(m, 'write')}" />
           <button class="btn-secondary share-copy">Копировать</button>
         </div>
+        <label class="share-label">Ссылка для комментирования</label>
+        <div class="share-row">
+          <input class="share-link" readonly value="${inviteLink(m, 'comment')}" />
+          <button class="btn-secondary share-copy">Копировать</button>
+        </div>
         <label class="share-label">Ссылка только для чтения</label>
         <div class="share-row">
           <input class="share-link" readonly value="${inviteLink(m, 'read')}" />
           <button class="btn-secondary share-copy">Копировать</button>
         </div>
-        <p class="share-hint">Ключи в части после # не попадают на сервер. Получатель read-ссылки видит документ и курсоры, но не может ничего изменить.</p>
+        <p class="share-hint">Ключи в части после # не попадают на сервер. Комментатор может оставлять комментарии и предлагать правки, но не редактировать текст напрямую. Читатель видит документ и курсоры, но ничего не меняет.</p>
         <div class="history-actions">
           <button class="btn-secondary" id="share-rotate">Отозвать доступ (сменить ссылки)</button>
         </div>
@@ -1006,12 +1076,17 @@ async function startBrowserMode() {
           : `не удалось открыть документ: ${e}`
       return
     }
-    await activateSession(guest, guest.canWrite ? 'общая заметка' : 'общая заметка (чтение)')
+    const roleSuffix = guest.canWrite
+      ? ''
+      : guest.canComment
+        ? ' (комментирование)'
+        : ' (чтение)'
+    await activateSession(guest, `общая заметка${roleSuffix}`)
     mountGuestPanel()
     showGuestLoadingOverlay(guest)
     // Название заметки владелец кладёт в общий документ — показываем его,
     // как только оно синхронизируется (до тех пор — заглушка выше).
-    const suffix = guest.canWrite ? '' : ' (чтение)'
+    const suffix = roleSuffix
     const applyTitle = () => {
       const t = sharedTitle(guest.ydoc)
       if (t) docNameEl.textContent = t + suffix
