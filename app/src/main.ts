@@ -282,7 +282,7 @@ async function activateSession(next: NoteSession, title: string) {
       },
       session.canComment // кнопки «Комментировать»/«Предложить» — и комментатору
     ),
-    suggestionsExtension()
+    suggestionsExtension((id) => openSuggestionInPanel(id))
   ]
   // Правка текста — только редактору. Комментатору ставим лишь readOnly:
   // правки блокируются, но выделение работает (иначе кнопки «Комментировать»/
@@ -407,10 +407,18 @@ function mountSuggestions(sess: NoteSession): () => void {
   const { ydoc, ytext } = sess
   const smap = suggestionsMap(ydoc)
 
+  // Новое предложение (в т.ч. прилетевшее от другого участника) должно быть
+  // видно сразу: кнопки «Принять/Отклонить» живут в панели обсуждения, и без
+  // автооткрытия редактор просто не знает, что предложение существует.
+  // Открываем только при РОСТЕ числа предложений, чтобы не переоткрывать
+  // панель, закрытую пользователем.
+  let knownCount = 0
   const refresh = () => {
     const views = suggestionViews(ydoc, ytext)
     safeDispatchEffects([setSuggestRanges.of(views)])
     renderSuggestions(views)
+    if (views.length > knownCount) showPanel()
+    knownCount = views.length
   }
 
   const onChange = () => refresh()
@@ -684,6 +692,13 @@ function startNewComment(from: number, to: number) {
   showPanel()
   renderCommentsPanel(threadViews(session.ydoc, session.ytext))
   document.querySelector<HTMLTextAreaElement>('#new-comment-text')?.focus()
+}
+
+function openSuggestionInPanel(id: string) {
+  showPanel()
+  if (session) renderSuggestions(suggestionViews(session.ydoc, session.ytext))
+  const card = document.querySelector(`[data-suggest-card="${id}"]`)
+  card?.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
 function openThreadInPanel(id: string) {

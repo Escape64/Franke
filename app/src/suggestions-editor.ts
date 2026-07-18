@@ -66,6 +66,17 @@ const suggestField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f)
 })
 
-export function suggestionsExtension() {
-  return [suggestField]
+export function suggestionsExtension(onOpen?: (id: string) => void) {
+  if (!onOpen) return [suggestField]
+  // Клик по зачёркнутому тексту или зелёному виджету открывает панель
+  // обсуждения на карточке этого предложения (паритет с комментариями).
+  const clickHandler = EditorView.domEventHandlers({
+    mousedown(event) {
+      const el = (event.target as HTMLElement).closest('[data-suggest]')
+      if (!(el instanceof HTMLElement) || !el.dataset.suggest) return false
+      onOpen(el.dataset.suggest)
+      return true
+    }
+  })
+  return [suggestField, clickHandler]
 }
