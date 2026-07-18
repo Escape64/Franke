@@ -2,7 +2,7 @@
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Franke",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.escape64.franke",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,8 +12,8 @@
     "windows": [
       {
         "title": "Franke",
-        "width": 800,
-        "height": 600,
+        "width": 1100,
+        "height": 750,
         "resizable": true,
         "fullscreen": false
       }
@@ -25,6 +25,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -34,6 +35,14 @@
     ],
     "android": {
       "debugApplicationIdSuffix": ".debug"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxQjg5NEJCNTc4NjhCQTUKUldTbGk0Wlh1NVM0VVpMMWsxNnJ1SHZkNmZ3Z0Q5Tzd3eVRpMlFXWXhGM0JZNk85bzZ5cUEvcDEK",
+      "endpoints": [
+        "https://github.com/Escape64/Franke/releases/latest/download/latest.json"
+      ]
     }
   }
 }

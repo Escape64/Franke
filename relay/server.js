@@ -5,6 +5,8 @@
 // Комната = путь URL. Документы живут в памяти, пока есть подключения;
 // персистентность и шифрование — этап 2.
 import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
 import { WebSocketServer } from 'ws'
 import * as Y from 'yjs'
 import * as syncProtocol from 'y-protocols/sync'
@@ -120,18 +122,50 @@ class Room {
 // --- Слепые комнаты (этап 2): путь /e/<docId> ---
 // Сервер не понимает содержимое: хранит журнал зашифрованных update-кадров
 // (store-and-forward для офлайн-участников) и транслирует их подключённым.
-// Awareness-кадры не хранятся. Комнаты не удаляются при отключении всех
-// участников — журнал должен пережить офлайн владельца (персистентность
-// журнала на диск — этап «рост»).
-/** @type {Map<string, {log: string[], conns: Set<import('ws').WebSocket>}>} */
+// Awareness-кадры не хранятся. Журнал должен пережить и офлайн владельца, и
+// рестарт relay: пишем его на диск (JSONL-файл на docId в DATA_DIR).
+// DATA_DIR="" отключает диск (журнал только в памяти, как раньше).
+const dataDir = process.env.DATA_DIR ?? './data'
+if (dataDir) fs.mkdirSync(dataDir, { recursive: true })
+
+// Лимиты против злоупотреблений публичным relay. Компакция журнала осознанно
+// отложена: relay слеп и не отличает кадр полного состояния от дельты.
+const MAX_FRAME_BYTES = 2 * 1024 * 1024 // один update-кадр
+const MAX_LOG_BYTES = 50 * 1024 * 1024 // журнал одной комнаты
+
+// docId приходит из URL — в имя файла только после строгой проверки формата.
+const validDocId = (id) => /^[A-Za-z0-9_-]{1,128}$/.test(id)
+const roomFile = (docId) => path.join(dataDir, `${docId}.jsonl`)
+
+/** @type {Map<string, {log: string[], bytes: number, conns: Set<import('ws').WebSocket>}>} */
 const blobRooms = new Map()
 
-function handleBlobConn(conn, docId) {
+function getBlobRoom(docId) {
   let room = blobRooms.get(docId)
-  if (!room) {
-    room = { log: [], conns: new Set() }
-    blobRooms.set(docId, room)
+  if (room) return room
+  room = { log: [], bytes: 0, conns: new Set() }
+  if (dataDir) {
+    try {
+      const raw = fs.readFileSync(roomFile(docId), 'utf8')
+      for (const line of raw.split('\n')) {
+        if (!line) continue
+        room.log.push(line)
+        room.bytes += Buffer.byteLength(line) + 1
+      }
+    } catch (e) {
+      if (e.code !== 'ENOENT') console.error(`шифрокомната ${docId}: не прочитан журнал:`, e)
+    }
   }
+  blobRooms.set(docId, room)
+  return room
+}
+
+function handleBlobConn(conn, docId) {
+  if (!validDocId(docId)) {
+    conn.close()
+    return
+  }
+  const room = getBlobRoom(docId)
   room.conns.add(conn)
 
   for (const frame of room.log) conn.send(frame)
@@ -146,8 +180,26 @@ function handleBlobConn(conn, docId) {
     }
     if (typeof msg.blob !== 'string') return
     if (msg.type === 'update') {
+      if (msg.blob.length > MAX_FRAME_BYTES) {
+        console.warn(`шифрокомната ${docId}: кадр больше лимита, отброшен`)
+        return
+      }
       const frame = JSON.stringify({ type: 'update', seq: room.log.length + 1, blob: msg.blob })
+      const size = Buffer.byteLength(frame) + 1
+      if (room.bytes + size > MAX_LOG_BYTES) {
+        console.warn(`шифрокомната ${docId}: журнал переполнен, кадр отброшен`)
+        return
+      }
       room.log.push(frame)
+      room.bytes += size
+      if (dataDir) {
+        // Синхронный append сохраняет порядок кадров; трафик небольшой.
+        try {
+          fs.appendFileSync(roomFile(docId), frame + '\n')
+        } catch (e) {
+          console.error(`шифрокомната ${docId}: не записан журнал:`, e)
+        }
+      }
       for (const c of room.conns) {
         if (c !== conn && c.readyState === c.OPEN) c.send(frame)
       }
@@ -158,7 +210,12 @@ function handleBlobConn(conn, docId) {
       }
     }
   })
-  const drop = () => room.conns.delete(conn)
+  const drop = () => {
+    room.conns.delete(conn)
+    // С диском пустую комнату можно выгрузить из памяти — вернётся с файла.
+    // Без диска держим в памяти: журнал должен пережить офлайн владельца.
+    if (dataDir && room.conns.size === 0) blobRooms.delete(docId)
+  }
   conn.on('close', drop)
   conn.on('error', drop)
 }

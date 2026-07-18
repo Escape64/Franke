@@ -1,0 +1,42 @@
+# Публичный relay с TLS (wss://) — для VPS с доменом.
+#
+#   1. DNS: A-запись домена (например relay.example.com) → IP этого сервера.
+#   2. DOMAIN=relay.example.com docker compose -f docker-compose.public.yml up -d
+#
+# Caddy сам получит сертификат Let's Encrypt и будет его продлевать.
+# Клиенты подключаются на wss://relay.example.com (адрес вписывается в
+# app/.env.production при сборке; ссылки-приглашения несут его в ?relay=).
+#
+# Для локальной разработки этот файл не нужен — есть docker-compose.yml.
+services:
+  relay:
+    build: ./relay
+    image: franke-relay
+    container_name: franke-relay
+    environment:
+      - PORT=1234
+      - DATA_DIR=/data
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: franke-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:?задайте DOMAIN=relay.example.com}
+    volumes:
+      - ./relay/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - relay
+    restart: unless-stopped
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:

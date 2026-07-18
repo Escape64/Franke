@@ -904,10 +904,9 @@ function mountGuestPanel() {
     downloadCurrentNote(docNameEl.textContent || 'franke-заметка')
   })
   document.querySelector('#guest-install')!.addEventListener('click', () => {
-    alert(
-      'Скоро: установите десктоп-приложение Franke, и эта же ссылка откроется как ' +
-        'постоянная локальная копия в вашем вольте. Пока можно скачать .md.'
-    )
+    // Пока без deep-link «открыть эту заметку в приложении» — просто ведём
+    // на скачивание; заметку можно забрать кнопкой «Скачать .md».
+    window.open(RELEASES_URL, '_blank', 'noopener')
   })
 }
 
@@ -1056,11 +1055,15 @@ function openShareDialog(
 }
 
 // --- Режим браузера ---
-// Ссылка-приглашение /d/<docId>#<readKey>.<signPub>[.<signPriv>] → шифрокомната.
-// ?room=... остаётся как plaintext dev-демо.
+// Ссылка-приглашение: ?d=<docId>#<readKey>.<signPub>[.<signPriv>] (прод —
+// query работает на любом статик-хостинге) или старый путь /d/<docId> (dev).
+// ?room=... остаётся как plaintext dev-демо; без параметров — лендинг.
 async function startBrowserMode() {
-  const inviteMatch = location.pathname.match(/^\/d\/([A-Za-z0-9_-]+)$/)
-  if (inviteMatch) {
+  const params = new URLSearchParams(location.search)
+  const fromQuery = params.get('d')
+  const fromPath = location.pathname.match(/\/d\/([A-Za-z0-9_-]+)$/)?.[1]
+  const docId = fromQuery && /^[A-Za-z0-9_-]+$/.test(fromQuery) ? fromQuery : fromPath
+  if (docId) {
     const keyB64 = location.hash.slice(1)
     if (!keyB64) {
       docNameEl.textContent = 'в ссылке нет ключа расшифровки (часть после #)'
@@ -1068,7 +1071,7 @@ async function startBrowserMode() {
     }
     let guest: NoteSession
     try {
-      guest = await openEncryptedRoom(inviteMatch[1], keyB64, currentUser())
+      guest = await openEncryptedRoom(docId, keyB64, currentUser())
     } catch (e) {
       docNameEl.textContent =
         e instanceof Error && e.message === 'legacy-link'
@@ -1095,11 +1098,39 @@ async function startBrowserMode() {
     applyTitle()
     return
   }
-  let room = new URLSearchParams(location.search).get('room') ?? 'franke-demo'
+  const roomParam = params.get('room')
+  if (roomParam === null) {
+    mountLanding()
+    return
+  }
   // ?room=note:Мой файл.md → комната dev-демо по пути
   // (URLSearchParams уже декодировал параметр, кодируем путь заново).
+  let room = roomParam || 'franke-demo'
   if (room.startsWith('note:')) room = roomForNote(room.slice('note:'.length))
   await activateSession(openRoom(room, currentUser()), room)
+}
+
+// --- Лендинг (браузер без параметров): что это и где скачать ---
+const RELEASES_URL = 'https://github.com/Escape64/Franke/releases/latest'
+
+function mountLanding() {
+  document.title = 'Franke — локальные заметки с живой коллаборацией'
+  app.innerHTML = `
+    <div class="landing">
+      <div class="landing-card">
+        <div class="landing-logo">Franke</div>
+        <p class="landing-tagline">Заметки, которые живут у вас на диске, — с совместным редактированием в реальном времени. Без облака: всё, что уходит в сеть, зашифровано, и прочитать это можем только вы и те, с кем вы поделились.</p>
+        <div class="landing-downloads">
+          <a class="landing-btn" href="${RELEASES_URL}">⬇ macOS (.dmg)</a>
+          <a class="landing-btn" href="${RELEASES_URL}">⬇ Windows (.exe)</a>
+          <a class="landing-btn" href="${RELEASES_URL}">⬇ Linux (.AppImage / .deb)</a>
+        </div>
+        <p class="landing-note">macOS при первом запуске: правый клик по приложению → «Открыть» (сборка пока без подписи Apple). Windows: «Подробнее» → «Выполнить в любом случае».</p>
+        <p class="landing-guest">Получили ссылку на заметку? Просто откройте её — редактор работает прямо в браузере, устанавливать ничего не нужно.</p>
+        <p class="landing-links"><a href="https://github.com/Escape64/Franke">GitHub</a> · relay можно поднять свой: <code>docker compose up -d</code></p>
+      </div>
+    </div>
+  `
 }
 
 // --- Режим Tauri: вольт на диске ---
@@ -1285,6 +1316,31 @@ if (inTauri) {
       void error(`unhandledrejection: ${e.reason?.stack ?? e.reason}`)
     )
   })
+}
+
+// Автообновление (только Tauri): при старте спрашиваем GitHub Releases.
+// Диалоги свои (askConfirm/notify) — в WKWebView нет confirm/alert. Плагины
+// импортируются динамически, чтобы не попадать в браузерный бандл гостя.
+async function checkForUpdates() {
+  const { check } = await import('@tauri-apps/plugin-updater')
+  const update = await check()
+  if (!update) return
+  const ok = await askConfirm(
+    `Вышла новая версия Franke ${update.version}. Установить сейчас? Заметки не пострадают.`,
+    'Обновить'
+  )
+  if (!ok) return
+  await update.downloadAndInstall()
+  const { relaunch } = await import('@tauri-apps/plugin-process')
+  if (await askConfirm('Обновление установлено. Перезапустить приложение?', 'Перезапустить')) {
+    await relaunch()
+  }
+}
+
+if (inTauri) {
+  // Молча при любой ошибке: нет сети, релизов ещё нет, endpoint недоступен —
+  // обновление не должно мешать работе с заметками.
+  void checkForUpdates().catch(() => {})
 }
 
 void (inTauri ? startVaultMode() : startBrowserMode()).catch(async (e) => {

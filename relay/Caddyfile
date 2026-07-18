@@ -1,0 +1,6 @@
+# TLS-терминация для публичного relay (wss://). Caddy сам получает и обновляет
+# сертификат Let's Encrypt по домену из env DOMAIN. WebSocket проксируется
+# без дополнительной настройки.
+{$DOMAIN} {
+	reverse_proxy relay:1234
+}
