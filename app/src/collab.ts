@@ -54,6 +54,20 @@ export function inviteLink(meta: ShareMeta, mode: 'write' | 'read'): string {
   return `${guestUrlBase()}/d/${meta.docId}?relay=${relay}#${keys}`
 }
 
+// Заголовок заметки хранится в самом Y.Doc (Y.Map 'meta'), поэтому
+// синхронизируется всем — включая браузерного гостя, который имени файла на
+// диске владельца не видит. Пишет заголовок только владелец (из имени файла),
+// остальные читают.
+export function sharedTitle(ydoc: Y.Doc): string | null {
+  const t = ydoc.getMap('meta').get('title')
+  return typeof t === 'string' && t ? t : null
+}
+
+export function setSharedTitle(ydoc: Y.Doc, title: string): void {
+  const map = ydoc.getMap('meta')
+  if (map.get('title') !== title) map.set('title', title)
+}
+
 /** Собрать ключи провайдера из меты владельца (полный доступ). */
 async function ownerKeys(meta: ShareMeta): Promise<ProviderKeys> {
   return {
@@ -274,6 +288,10 @@ export async function openNote(rel: string, user: UserInfo): Promise<NoteSession
     }
     // Если документ непуст — правда на relay, файл перезапишется сохранением.
   }
+
+  // Владелец кладёт заголовок (имя файла) в общий документ, чтобы гость видел
+  // настоящее название заметки, а не заглушку.
+  setSharedTitle(ydoc, rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, ''))
 
   // Чекпойнт истории при открытии: если состояние изменилось с последней
   // версии, фиксируем его (дедупликация внутри createVersion).

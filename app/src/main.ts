@@ -15,6 +15,7 @@ import {
   roomForNote,
   rotateShare,
   shareNote,
+  sharedTitle,
   type NoteSession,
   type UserInfo
 } from './collab'
@@ -128,6 +129,51 @@ document.querySelector('#history-btn')!.addEventListener('click', () => openHist
 let session: NoteSession | null = null
 let view: EditorView | null = null
 let activeNote: string | null = null
+// Переименовать активную заметку по новому имени; задаётся в vault-режиме.
+let renameActive: ((newBase: string) => Promise<void>) | null = null
+
+// Инлайн-редактирование названия прямо в шапке (дабл-клик по заголовку),
+// как в сайдбаре. Прячем span, вставляем поле; Enter/клик-мимо — сохранить,
+// Esc — отмена. Переименование выполняет renameActive (vault-режим).
+let headerRenaming = false
+function startHeaderRename() {
+  if (headerRenaming || !session || !renameActive) return
+  headerRenaming = true
+  const current = docNameEl.textContent ?? ''
+  const input = document.createElement('input')
+  input.className = 'doc-name-input'
+  input.value = current
+  docNameEl.style.display = 'none'
+  docNameEl.after(input)
+  input.focus()
+  input.select()
+  let done = false
+  const cleanup = () => {
+    input.remove()
+    docNameEl.style.display = ''
+    headerRenaming = false
+  }
+  const commit = async () => {
+    if (done) return
+    done = true
+    const val = input.value.trim()
+    cleanup()
+    if (val && val !== current) await renameActive!(val)
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      void commit()
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      done = true
+      cleanup()
+    }
+  })
+  input.addEventListener('blur', () => void commit())
+}
+// renameActive задан только в vault-режиме — у гостя переименования нет.
+docNameEl.addEventListener('dblclick', () => startHeaderRename())
 
 const renderStatus = () => {
   if (!session) return
@@ -454,7 +500,7 @@ function openHistoryModal() {
   if (canWrite) createVersion(ydoc, currentUser().name)
   const versions = listVersions(ydoc)
   if (versions.length === 0) {
-    alert('История пока пуста — сделайте первую правку.')
+    notify('История пока пуста — сделайте первую правку.')
     return
   }
 
@@ -800,7 +846,82 @@ function mountGuestPanel() {
   })
 }
 
+// Модальное подтверждение (замена confirm(), не работающего в вебвью Tauri).
+function askConfirm(message: string, okLabel = 'Продолжить'): Promise<boolean> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div')
+    overlay.className = 'history-overlay'
+    overlay.innerHTML = `
+      <div class="history-modal ask-modal">
+        <p class="ask-message">${message}</p>
+        <div class="history-actions">
+          <span class="spacer"></span>
+          <button class="btn-secondary" data-ask="cancel">Отмена</button>
+          <button class="btn-primary" data-ask="ok">${okLabel}</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(overlay)
+    let done = false
+    const finish = (v: boolean) => {
+      if (done) return
+      done = true
+      overlay.remove()
+      resolve(v)
+    }
+    overlay.querySelector('[data-ask="ok"]')!.addEventListener('click', () => finish(true))
+    overlay.querySelector('[data-ask="cancel"]')!.addEventListener('click', () => finish(false))
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) finish(false)
+    })
+  })
+}
+
+// Короткое уведомление (замена alert()).
+function notify(message: string): void {
+  const overlay = document.createElement('div')
+  overlay.className = 'history-overlay'
+  overlay.innerHTML = `
+    <div class="history-modal ask-modal">
+      <p class="ask-message">${message}</p>
+      <div class="history-actions">
+        <span class="spacer"></span>
+        <button class="btn-primary" data-ask="ok">ОК</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  const close = () => overlay.remove()
+  overlay.querySelector('[data-ask="ok"]')!.addEventListener('click', close)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close()
+  })
+}
+
 // --- Диалог «Поделиться»: две ссылки + отзыв доступа ---
+// Копирование в буфер: clipboard API, с фолбэком на execCommand для вебвью,
+// где clipboard может быть недоступен вне «безопасного» контекста.
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      ta.remove()
+      return ok
+    } catch {
+      return false
+    }
+  }
+}
+
 function openShareDialog(
   meta: import('./vault').ShareMeta,
   onRotate: () => Promise<import('./vault').ShareMeta>
@@ -815,9 +936,15 @@ function openShareDialog(
           <button id="share-close" title="Закрыть">×</button>
         </div>
         <label class="share-label">Ссылка для редактирования</label>
-        <input class="share-link" readonly value="${inviteLink(m, 'write')}" />
+        <div class="share-row">
+          <input class="share-link" readonly value="${inviteLink(m, 'write')}" />
+          <button class="btn-secondary share-copy">Копировать</button>
+        </div>
         <label class="share-label">Ссылка только для чтения</label>
-        <input class="share-link" readonly value="${inviteLink(m, 'read')}" />
+        <div class="share-row">
+          <input class="share-link" readonly value="${inviteLink(m, 'read')}" />
+          <button class="btn-secondary share-copy">Копировать</button>
+        </div>
         <p class="share-hint">Ключи в части после # не попадают на сервер. Получатель read-ссылки видит документ и курсоры, но не может ничего изменить.</p>
         <div class="history-actions">
           <button class="btn-secondary" id="share-rotate">Отозвать доступ (сменить ссылки)</button>
@@ -828,13 +955,25 @@ function openShareDialog(
     overlay.querySelectorAll<HTMLInputElement>('.share-link').forEach((inp) =>
       inp.addEventListener('focus', () => inp.select())
     )
+    overlay.querySelectorAll<HTMLButtonElement>('.share-copy').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const input = btn.previousElementSibling as HTMLInputElement
+        const ok = await copyText(input.value)
+        const orig = btn.textContent
+        btn.textContent = ok ? 'Скопировано ✓' : 'Не вышло'
+        btn.classList.toggle('copied', ok)
+        setTimeout(() => {
+          btn.textContent = orig
+          btn.classList.remove('copied')
+        }, 1500)
+      })
+    })
     overlay.querySelector('#share-rotate')!.addEventListener('click', async () => {
-      if (
-        !confirm(
-          'Старые ссылки перестанут получать новые правки, у заметки появятся новые ссылки. Продолжить?'
-        )
+      const ok = await askConfirm(
+        'Старые ссылки перестанут получать новые правки, у заметки появятся новые ссылки. Продолжить?',
+        'Отозвать'
       )
-        return
+      if (!ok) return
       const fresh = await onRotate()
       render(fresh)
     })
@@ -870,6 +1009,15 @@ async function startBrowserMode() {
     await activateSession(guest, guest.canWrite ? 'общая заметка' : 'общая заметка (чтение)')
     mountGuestPanel()
     showGuestLoadingOverlay(guest)
+    // Название заметки владелец кладёт в общий документ — показываем его,
+    // как только оно синхронизируется (до тех пор — заглушка выше).
+    const suffix = guest.canWrite ? '' : ' (чтение)'
+    const applyTitle = () => {
+      const t = sharedTitle(guest.ydoc)
+      if (t) docNameEl.textContent = t + suffix
+    }
+    guest.ydoc.getMap('meta').observe(applyTitle)
+    applyTitle()
     return
   }
   let room = new URLSearchParams(location.search).get('room') ?? 'franke-demo'
@@ -884,6 +1032,10 @@ async function startVaultMode() {
   await initVault()
   const treeEl = document.querySelector<HTMLElement>('#file-tree')!
 
+  // Заметка, которую сейчас переименовывают инлайн (двойным кликом). Хранится
+  // как состояние, чтобы перерисовка дерева не сбивала поле ввода.
+  let renamingRel: string | null = null
+
   const refreshTree = async () => {
     const notes = await listNotes()
     treeEl.innerHTML = ''
@@ -897,13 +1049,82 @@ async function startVaultMode() {
         treeEl.appendChild(f)
       }
       lastFolder = folder
-      const item = document.createElement('button')
-      item.className = 'tree-item' + (rel === activeNote ? ' active' : '')
-      item.style.paddingLeft = `${12 + (rel.split('/').length - 1) * 14}px`
-      item.textContent = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '')
-      item.addEventListener('click', () => void open(rel))
-      treeEl.appendChild(item)
+      const indent = `${12 + (rel.split('/').length - 1) * 14}px`
+      const base = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '')
+
+      if (rel === renamingRel) {
+        // Инлайн-редактирование имени прямо в дереве (как в Obsidian/Claude).
+        const input = document.createElement('input')
+        input.className = 'tree-rename-input'
+        input.style.paddingLeft = indent
+        input.value = base
+        let done = false
+        const commit = () => {
+          if (done) return
+          done = true
+          void doRename(rel, input.value)
+        }
+        const cancel = () => {
+          if (done) return
+          done = true
+          renamingRel = null
+          void refreshTree()
+        }
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            commit()
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            cancel()
+          }
+        })
+        input.addEventListener('blur', commit)
+        treeEl.appendChild(input)
+        queueMicrotask(() => {
+          input.focus()
+          input.select()
+        })
+      } else {
+        const item = document.createElement('button')
+        item.className = 'tree-item' + (rel === activeNote ? ' active' : '')
+        item.style.paddingLeft = indent
+        item.textContent = base
+        item.addEventListener('click', () => void open(rel))
+        item.addEventListener('dblclick', (e) => {
+          e.preventDefault()
+          renamingRel = rel
+          void refreshTree()
+        })
+        treeEl.appendChild(item)
+      }
     }
+  }
+
+  // Переименование двигает вместе с .md и sidecar, и share.json, поэтому
+  // docId (адрес комнаты) переезжает с файлом — совместная сессия не рвётся
+  // (владелец лишь на миг переподключается). Сохраняем папку-родителя, .md.
+  const doRename = async (oldRel: string, rawName: string) => {
+    renamingRel = null
+    const dir = oldRel.includes('/') ? oldRel.slice(0, oldRel.lastIndexOf('/') + 1) : ''
+    const clean = rawName.trim().replace(/\.md$/, '')
+    if (!clean) return void refreshTree()
+    const newRel = `${dir}${clean}.md`
+    if (newRel === oldRel) return void refreshTree()
+    const wasActive = oldRel === activeNote
+    if (wasActive) {
+      activeNote = null
+      await session?.destroy()
+      session = null
+    }
+    await renameNote(oldRel, newRel)
+    await refreshTree()
+    if (wasActive) await open(newRel)
+  }
+
+  // Дабл-клик по заголовку в шапке переименовывает активную заметку.
+  renameActive = async (newBase: string) => {
+    if (activeNote) await doRename(activeNote, newBase)
   }
 
   const open = async (rel: string) => {
@@ -914,9 +1135,16 @@ async function startVaultMode() {
   }
 
   document.querySelector('#new-note')!.addEventListener('click', async () => {
-    const name = prompt('Имя новой заметки:')
-    if (!name) return
-    const rel = name.endsWith('.md') ? name : `${name}.md`
+    // Как в Obsidian: создаём «Без названия» (потом «Без названия 1», …) и сразу
+    // открываем — без диалога. Переименовать можно кнопкой ✎ по желанию.
+    const notes = await listNotes()
+    const taken = new Set(
+      notes.filter((r) => !r.includes('/')).map((r) => r.replace(/\.md$/, ''))
+    )
+    const base = 'Без названия'
+    let name = base
+    for (let n = 1; taken.has(name); n++) name = `${base} ${n}`
+    const rel = `${name}.md`
     await createNote(rel)
     await refreshTree()
     await open(rel)
@@ -944,20 +1172,11 @@ async function startVaultMode() {
     })
   })
 
-  document.querySelector('#rename-note')!.addEventListener('click', async () => {
+  // Кнопка ✎ — запасной путь к тому же инлайн-переименованию активной заметки.
+  document.querySelector('#rename-note')!.addEventListener('click', () => {
     if (!activeNote) return
-    const name = prompt('Новое имя заметки:', activeNote.replace(/\.md$/, ''))
-    if (!name) return
-    const newRel = name.endsWith('.md') ? name : `${name}.md`
-    if (newRel === activeNote) return
-    // Ограничение прототипа: комната = путь, у соредакторов сессия оборвётся.
-    const old = activeNote
-    activeNote = null
-    await session?.destroy()
-    session = null
-    await renameNote(old, newRel)
-    await refreshTree()
-    await open(newRel)
+    renamingRel = activeNote
+    void refreshTree()
   })
 
   await watchVault(async (changedRels) => {
