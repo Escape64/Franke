@@ -37,7 +37,7 @@ A local-first markdown note-taking app (Obsidian-like) whose core feature is Goo
 - **CRDT, not OT and not file sync.** Yjs is the chosen implementation; the CRDT document is the source of truth, the `.md` file on disk is a projection.
 - **Networking:** a lightweight relay (WebSocket, store-and-forward) that only carries E2E-encrypted CRDT updates. The document key lives in the URL `#` fragment and never reaches the server. Pure P2P was rejected (requires simultaneous online). Optional `y-webrtc` LAN/P2P channel later.
 - **Browser guest** is the same editor bundle served as a static site — not a separate product.
-- **Access revocation** = document key rotation. Read-only access = separate read key from write key (read = the AES key; write = an ECDSA signature on every update, verified by all clients — the relay stays blind).
+- **Access revocation** = document key rotation. Read-only access = separate read key from write key (read = the AES key; write = an ECDSA signature on every update, verified by all clients — the relay stays blind). Three roles via the invite fragment: `#read.pub.priv` (editor), `#read.pub.priv.c` (commenter — has the signing key so can write comments/suggestions, but the CLIENT UI blocks text editing; NOT cryptographically enforced), `#read.pub` (reader — no signing key, crypto-enforced). `NoteSession.canWrite` (edit text) and `canComment` (annotate) gate the UI. A commenter's editor gets `EditorState.readOnly` only (NOT `editable=false`) so selection still works for anchoring comments; a reader gets both.
 
 ## Code map
 

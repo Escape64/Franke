@@ -41,16 +41,26 @@ export function roomForNote(rel: string): string {
 
 /**
  * Ссылки-приглашения. Формат фрагмента (частей через точку):
- *  редактирование: #<readKey>.<signPub>.<signPriv>
- *  только чтение:  #<readKey>.<signPub>
+ *  редактирование:  #<readKey>.<signPub>.<signPriv>
+ *  комментирование: #<readKey>.<signPub>.<signPriv>.c  (ключ подписи есть,
+ *                   но клиент блокирует правку текста — только комменты/правки)
+ *  только чтение:   #<readKey>.<signPub>
  *  легаси (этап 2): #<readKey> — деградирует до чтения без проверки подписей.
+ *
+ * ВНИМАНИЕ по безопасности: у «комментатора» ЕСТЬ приватный ключ подписи
+ * (иначе он не смог бы писать комментарии в общий док), поэтому запрет на
+ * правку текста — чисто клиентский (UI). Криптографически «комментатор» может
+ * подписать и правку текста. Строгий крипто-запрет требовал бы раздельных
+ * ключей на «текст» и «аннотации» — отложено. У «читателя» ключа подписи нет,
+ * его ограничение крипто-надёжное.
  */
-export function inviteLink(meta: ShareMeta, mode: 'write' | 'read'): string {
+export function inviteLink(meta: ShareMeta, mode: 'write' | 'comment' | 'read'): string {
   // Адрес relay кладём в query (не секрет), ключи — во фрагмент #.
   const relay = encodeURIComponent(relayUrl())
-  const keys = mode === 'write'
-    ? `${meta.key}.${meta.signPub}.${meta.signPriv}`
-    : `${meta.key}.${meta.signPub}`
+  let keys: string
+  if (mode === 'write') keys = `${meta.key}.${meta.signPub}.${meta.signPriv}`
+  else if (mode === 'comment') keys = `${meta.key}.${meta.signPub}.${meta.signPriv}.c`
+  else keys = `${meta.key}.${meta.signPub}`
   return `${guestUrlBase()}/d/${meta.docId}?relay=${relay}#${keys}`
 }
 
@@ -95,8 +105,10 @@ export interface NoteSession {
   undoManager: Y.UndoManager
   /** true — гость в браузере (нет вольта, документ кэшируется в IndexedDB). */
   isGuest: boolean
-  /** false — режим «только чтение» (read-ссылка или легаси-ссылка). */
+  /** true — можно редактировать текст заметки (роль «редактор»/владелец). */
   canWrite: boolean
+  /** true — можно комментировать и предлагать правки (редактор + комментатор). */
+  canComment: boolean
   /** Внешняя правка .md с диска → влить diff в CRDT. */
   reconcileFromDisk: (diskText: string) => void
   destroy: () => Promise<void>
@@ -161,6 +173,7 @@ export function openRoom(room: string, user: UserInfo): NoteSession {
     undoManager: new Y.UndoManager(ytext),
     isGuest: false,
     canWrite: true,
+    canComment: true,
     reconcileFromDisk: () => {},
     destroy: async () => {
       provider.destroy()
@@ -188,11 +201,15 @@ export async function openEncryptedRoom(
   const idb = new IndexeddbPersistence(`franke-guest:${docId}`, ydoc)
   await idb.whenSynced // локальный кэш загружен (или пуст при первом визите)
 
-  // Фрагмент ссылки: readKey.signPub[.signPriv] — см. inviteLink.
+  // Фрагмент ссылки: readKey.signPub[.signPriv[.c]] — см. inviteLink.
   // Ссылки этапа 2 (только readKey) несовместимы с подписанным форматом
   // кадров — честно просим новую вместо молча пустого документа.
-  const [keyB64, signPub, signPriv] = fragment.split('.')
+  const [keyB64, signPub, signPriv, mode] = fragment.split('.')
   if (!signPub) throw new Error('legacy-link')
+  // signPriv есть → можно подписывать (редактор или комментатор);
+  // суффикс '.c' → комментатор: подпись есть, но правку текста UI блокирует.
+  const canComment = !!signPriv
+  const canWrite = !!signPriv && mode !== 'c'
   const keys: ProviderKeys = {
     readKey: await importKeyB64(keyB64),
     verifyKey: await importVerifyKey(signPub),
@@ -209,7 +226,8 @@ export async function openEncryptedRoom(
     share: { docId, key: keyB64, signPub, signPriv },
     undoManager: new Y.UndoManager(ytext),
     isGuest: true,
-    canWrite: provider.canWrite,
+    canWrite,
+    canComment,
     reconcileFromDisk: () => {},
     destroy: async () => {
       await provider.destroy()
@@ -340,6 +358,7 @@ export async function openNote(rel: string, user: UserInfo): Promise<NoteSession
     undoManager,
     isGuest: false,
     canWrite: true,
+    canComment: true,
     reconcileFromDisk: (text: string) => {
       if (text === lastDiskText) return // это наша собственная запись
       lastDiskText = text
