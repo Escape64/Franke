@@ -56,12 +56,14 @@ export function roomForNote(rel: string): string {
  */
 export function inviteLink(meta: ShareMeta, mode: 'write' | 'comment' | 'read'): string {
   // Адрес relay кладём в query (не секрет), ключи — во фрагмент #.
+  // docId — тоже в query (?d=), а не в путь: статик-хостинги (GitHub Pages)
+  // не умеют отдавать index.html по произвольному пути /d/<id>.
   const relay = encodeURIComponent(relayUrl())
   let keys: string
   if (mode === 'write') keys = `${meta.key}.${meta.signPub}.${meta.signPriv}`
   else if (mode === 'comment') keys = `${meta.key}.${meta.signPub}.${meta.signPriv}.c`
   else keys = `${meta.key}.${meta.signPub}`
-  return `${guestUrlBase()}/d/${meta.docId}?relay=${relay}#${keys}`
+  return `${guestUrlBase()}/?d=${meta.docId}&relay=${relay}#${keys}`
 }
 
 // Заголовок заметки хранится в самом Y.Doc (Y.Map 'meta'), поэтому

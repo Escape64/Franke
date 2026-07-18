@@ -13,6 +13,11 @@ COPY server.js ./
 ENV PORT=1234
 EXPOSE 1234
 
+# Журнал шифрокомнат живёт на диске и переживает рестарт контейнера
+# (примонтируйте volume на /data).
+RUN mkdir -p /data && chown node:node /data
+ENV DATA_DIR=/data
+
 # Порт > 1024 — non-root справится.
 USER node
 

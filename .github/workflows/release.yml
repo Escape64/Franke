@@ -1,0 +1,72 @@
+# Сборка инсталляторов под три ОС на тег vX.Y.Z.
+# Создаёт ЧЕРНОВИК релиза на GitHub с артефактами + latest.json (автообновление);
+# публикуем черновик руками после проверки.
+#
+# Секреты (gh secret set):
+#   TAURI_SIGNING_PRIVATE_KEY          — приватный ключ подписи обновлений
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD — пароль ключа (у нас пустой)
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Один универсальный .dmg для Intel и Apple Silicon
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+          - platform: ubuntu-22.04
+            args: ''
+          - platform: windows-latest
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Для universal-сборки macOS нужны оба таргета
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Системные зависимости Tauri (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - run: npm install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Franke ${{ github.ref_name }}'
+          releaseBody: |
+            Установка: скачайте файл под свою ОС ниже.
+            - macOS: откройте .dmg, перетащите Franke в Programs. Первый запуск — правый клик → «Открыть» (сборка без подписи Apple).
+            - Windows: запустите -setup.exe. Если SmartScreen предупреждает — «Подробнее» → «Выполнить в любом случае».
+            - Linux: .AppImage (chmod +x и запустить) или .deb/.rpm.
+          releaseDraft: true
+          includeUpdaterJson: true
+          args: ${{ matrix.args }}

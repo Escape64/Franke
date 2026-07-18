@@ -942,3 +942,76 @@ header .spacer {
 .cm-editor .cm-gutters {
   border-radius: 10px 0 0 0;
 }
+
+/* --- Лендинг (браузер без параметров) --- */
+.landing {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(180deg, #faf7f0, #f0ead9);
+}
+
+.landing-card {
+  max-width: 560px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 44px;
+  box-shadow: 0 12px 40px rgba(60, 50, 20, 0.08);
+}
+
+.landing-logo {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin-bottom: 12px;
+}
+
+.landing-tagline {
+  font-size: 16px;
+  line-height: 1.55;
+  margin-bottom: 24px;
+}
+
+.landing-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.landing-btn {
+  display: inline-block;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.landing-btn:hover {
+  filter: brightness(1.08);
+}
+
+.landing-note,
+.landing-guest,
+.landing-links {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.landing-guest {
+  color: var(--text);
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+}
+
+.landing-links a {
+  color: var(--accent);
+}

@@ -3,3 +3,4 @@ dist/
 .DS_Store
 *.log
 app/src-tauri/target/
+relay/data/

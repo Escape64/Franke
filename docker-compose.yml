@@ -11,4 +11,10 @@ services:
       - "${FRANKE_RELAY_PORT:-1234}:1234"
     environment:
       - PORT=1234
+      - DATA_DIR=/data
+    volumes:
+      - relay-data:/data
     restart: unless-stopped
+
+volumes:
+  relay-data:
