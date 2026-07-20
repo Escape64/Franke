@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Franke",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "identifier": "com.escape64.franke",
   "build": {
     "frontendDist": "../dist",
@@ -15,7 +15,8 @@
         "width": 1100,
         "height": 750,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

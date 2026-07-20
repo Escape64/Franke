@@ -69,21 +69,55 @@ export function toRelPath(abs: string): string | null {
   return abs.slice(vaultRoot.length + 1)
 }
 
-export async function listNotes(): Promise<string[]> {
-  const out: string[] = []
+export interface VaultEntries {
+  folders: string[]
+  notes: string[]
+}
+
+/** Полный листинг вольта: и папки (включая пустые), и .md-заметки. */
+export async function listEntries(): Promise<VaultEntries> {
+  const folders: string[] = []
+  const notes: string[] = []
   const walk = async (dirAbs: string, relPrefix: string) => {
     for (const entry of await readDir(dirAbs)) {
       if (entry.name.startsWith('.')) continue
       const rel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name
       if (entry.isDirectory) {
+        folders.push(rel)
         await walk(`${dirAbs}/${entry.name}`, rel)
       } else if (entry.name.endsWith('.md')) {
-        out.push(rel)
+        notes.push(rel)
       }
     }
   }
   await walk(vaultRoot, '')
-  return out.sort((a, b) => a.localeCompare(b, 'ru'))
+  folders.sort((a, b) => a.localeCompare(b, 'ru'))
+  notes.sort((a, b) => a.localeCompare(b, 'ru'))
+  return { folders, notes }
+}
+
+export async function listNotes(): Promise<string[]> {
+  return (await listEntries()).notes
+}
+
+export async function createFolder(rel: string): Promise<void> {
+  await mkdir(absPath(rel), { recursive: true })
+}
+
+/**
+ * Перенос/переименование папки. Вместе с самой папкой переезжает её
+ * поддерево в .franke (sidecar'ы и share-меты всех вложенных заметок) —
+ * docId переезжают с файлами, совместные сессии вложенных заметок не рвутся.
+ */
+export async function moveFolder(oldRel: string, newRel: string): Promise<void> {
+  await ensureParentDir(absPath(newRel))
+  await rename(absPath(oldRel), absPath(newRel))
+  const oldSide = `${vaultRoot}/${SIDECAR_DIR}/${oldRel}`
+  if (await exists(oldSide)) {
+    const newSide = `${vaultRoot}/${SIDECAR_DIR}/${newRel}`
+    await ensureParentDir(newSide)
+    await rename(oldSide, newSide)
+  }
 }
 
 export async function readNote(rel: string): Promise<string | null> {

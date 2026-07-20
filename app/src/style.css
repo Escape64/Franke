@@ -79,11 +79,46 @@ body {
 }
 
 .tree-folder {
-  padding: 8px 12px 2px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #57534e;
+  cursor: pointer;
+}
+
+.tree-folder:hover {
+  background: #e9e9e5;
+}
+
+.sidebar-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.sidebar-actions button {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+}
+
+.sidebar-actions svg {
+  display: block;
+}
+
+#file-tree {
+  flex: 1;
+  min-height: 60px;
+}
+
+.drag-over {
+  background: #e3e0f7 !important;
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
 }
 
 .tree-item {

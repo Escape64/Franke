@@ -29,7 +29,17 @@ import {
   type NoteSession,
   type UserInfo
 } from './collab'
-import { initVault, listNotes, createNote, renameNote, watchVault } from './vault'
+import {
+  initVault,
+  listNotes,
+  listEntries,
+  createNote,
+  createFolder,
+  renameNote,
+  moveFolder,
+  watchVault,
+  type VaultEntries
+} from './vault'
 import {
   commentsMap,
   createThread,
@@ -87,7 +97,10 @@ app.innerHTML = `
       ? `<aside id="sidebar">
            <div class="sidebar-head">
              <span>FrankeVault</span>
-             <button id="new-note" title="Новая заметка">+</button>
+             <span class="sidebar-actions">
+               <button id="new-note" title="Новая заметка"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4Z"/></svg></button>
+               <button id="new-folder" title="Новая папка"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg></button>
+             </span>
            </div>
            <nav id="file-tree"></nav>
            <div class="sidebar-version" id="sidebar-version"></div>
@@ -1184,73 +1197,242 @@ async function startVaultMode() {
     if (el) el.textContent = `Franke v${await getVersion()}`
   })
 
-  // Заметка, которую сейчас переименовывают инлайн (двойным кликом). Хранится
-  // как состояние, чтобы перерисовка дерева не сбивала поле ввода.
+  // Заметка/папка, которую сейчас переименовывают инлайн (двойным кликом).
+  // Хранится как состояние, чтобы перерисовка дерева не сбивала поле ввода.
   let renamingRel: string | null = null
+  let renamingFolder: string | null = null
+  // Свёрнутые папки (пути); живёт до перезапуска приложения
+  const collapsed = new Set<string>()
+  // Перетаскиваемый элемент сайдбара (DnD в пределах окна — dataTransfer не нужен)
+  let dragging: { kind: 'note' | 'folder'; rel: string } | null = null
+  // Снимок последнего листинга — для проверки коллизий при дропе
+  let snapshot: VaultEntries = { folders: [], notes: [] }
+
+  const parentOf = (rel: string) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '')
+  const baseOf = (rel: string) => rel.slice(rel.lastIndexOf('/') + 1)
+
+  const renameInput = (
+    value: string,
+    indent: string,
+    onCommit: (v: string) => void,
+    onCancel: () => void
+  ) => {
+    const input = document.createElement('input')
+    input.className = 'tree-rename-input'
+    input.style.paddingLeft = indent
+    input.value = value
+    let done = false
+    const commit = () => {
+      if (done) return
+      done = true
+      onCommit(input.value)
+    }
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        commit()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        if (!done) {
+          done = true
+          onCancel()
+        }
+      }
+    })
+    input.addEventListener('blur', commit)
+    queueMicrotask(() => {
+      input.focus()
+      input.select()
+    })
+    return input
+  }
+
+  const wireDrag = (el: HTMLElement, item: { kind: 'note' | 'folder'; rel: string }) => {
+    el.draggable = true
+    el.addEventListener('dragstart', (e) => {
+      dragging = item
+      // WebKit не начинает drag без данных в dataTransfer
+      e.dataTransfer?.setData('text/plain', item.rel)
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+    })
+    el.addEventListener('dragend', () => {
+      dragging = null
+    })
+  }
+
+  // Дроп на папку; на заметку — цель её папка; на пустое место списка — корень.
+  const wireDrop = (el: HTMLElement, targetFolder: string) => {
+    el.addEventListener('dragover', (e) => {
+      if (!dragging) return
+      e.preventDefault()
+      e.stopPropagation()
+      el.classList.add('drag-over')
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    })
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'))
+    el.addEventListener('drop', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      el.classList.remove('drag-over')
+      void dropTo(targetFolder)
+    })
+  }
+
+  const dropTo = async (targetFolder: string) => {
+    const d = dragging
+    dragging = null
+    if (!d) return
+    if (d.kind === 'note') {
+      if (parentOf(d.rel) === targetFolder) return
+      const newRel = targetFolder ? `${targetFolder}/${baseOf(d.rel)}` : baseOf(d.rel)
+      if (snapshot.notes.includes(newRel)) {
+        notify('Там уже есть заметка с таким именем')
+        return
+      }
+      const wasActive = d.rel === activeNote
+      if (wasActive) {
+        activeNote = null
+        await session?.destroy()
+        session = null
+      }
+      await renameNote(d.rel, newRel)
+      await refreshTree()
+      if (wasActive) await open(newRel)
+    } else {
+      if (targetFolder === d.rel || targetFolder.startsWith(d.rel + '/')) {
+        notify('Нельзя переместить папку внутрь самой себя')
+        return
+      }
+      if (parentOf(d.rel) === targetFolder) return
+      const newRel = targetFolder ? `${targetFolder}/${baseOf(d.rel)}` : baseOf(d.rel)
+      await doMoveFolder(d.rel, newRel)
+    }
+  }
 
   const refreshTree = async () => {
-    const notes = await listNotes()
+    snapshot = await listEntries()
     treeEl.innerHTML = ''
-    let lastFolder = ''
-    for (const rel of notes) {
-      const folder = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
-      if (folder && folder !== lastFolder) {
-        const f = document.createElement('div')
-        f.className = 'tree-folder'
-        f.textContent = folder
-        treeEl.appendChild(f)
-      }
-      lastFolder = folder
-      const indent = `${12 + (rel.split('/').length - 1) * 14}px`
-      const base = rel.slice(rel.lastIndexOf('/') + 1).replace(/\.md$/, '')
+    renderLevel('', 0)
+  }
 
-      if (rel === renamingRel) {
-        // Инлайн-редактирование имени прямо в дереве (как в Obsidian/Claude).
-        const input = document.createElement('input')
-        input.className = 'tree-rename-input'
-        input.style.paddingLeft = indent
-        input.value = base
-        let done = false
-        const commit = () => {
-          if (done) return
-          done = true
-          void doRename(rel, input.value)
-        }
-        const cancel = () => {
-          if (done) return
-          done = true
-          renamingRel = null
-          void refreshTree()
-        }
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            commit()
-          } else if (e.key === 'Escape') {
-            e.preventDefault()
-            cancel()
+  const renderLevel = (parent: string, depth: number) => {
+    const indent = `${12 + depth * 14}px`
+    for (const f of snapshot.folders.filter((x) => parentOf(x) === parent)) {
+      renderFolderRow(f, indent)
+      if (!collapsed.has(f)) renderLevel(f, depth + 1)
+    }
+    for (const n of snapshot.notes.filter((x) => parentOf(x) === parent)) {
+      renderNoteRow(n, indent)
+    }
+  }
+
+  const renderFolderRow = (rel: string, indent: string) => {
+    if (rel === renamingFolder) {
+      treeEl.appendChild(
+        renameInput(
+          baseOf(rel),
+          indent,
+          (v) => void doRenameFolder(rel, v),
+          () => {
+            renamingFolder = null
+            void refreshTree()
           }
-        })
-        input.addEventListener('blur', commit)
-        treeEl.appendChild(input)
-        queueMicrotask(() => {
-          input.focus()
-          input.select()
-        })
-      } else {
-        const item = document.createElement('button')
-        item.className = 'tree-item' + (rel === activeNote ? ' active' : '')
-        item.style.paddingLeft = indent
-        item.textContent = base
-        item.addEventListener('click', () => void open(rel))
-        item.addEventListener('dblclick', (e) => {
-          e.preventDefault()
-          renamingRel = rel
-          void refreshTree()
-        })
-        treeEl.appendChild(item)
+        )
+      )
+      return
+    }
+    const row = document.createElement('button')
+    row.className = 'tree-folder'
+    row.style.paddingLeft = indent
+    row.textContent = `${collapsed.has(rel) ? '▸' : '▾'} ${baseOf(rel)}`
+    row.addEventListener('click', () => {
+      if (collapsed.has(rel)) collapsed.delete(rel)
+      else collapsed.add(rel)
+      void refreshTree()
+    })
+    row.addEventListener('dblclick', (e) => {
+      e.preventDefault()
+      renamingFolder = rel
+      void refreshTree()
+    })
+    wireDrag(row, { kind: 'folder', rel })
+    wireDrop(row, rel)
+    treeEl.appendChild(row)
+  }
+
+  const renderNoteRow = (rel: string, indent: string) => {
+    const base = baseOf(rel).replace(/\.md$/, '')
+    if (rel === renamingRel) {
+      treeEl.appendChild(
+        renameInput(
+          base,
+          indent,
+          (v) => void doRename(rel, v),
+          () => {
+            renamingRel = null
+            void refreshTree()
+          }
+        )
+      )
+      return
+    }
+    const item = document.createElement('button')
+    item.className = 'tree-item' + (rel === activeNote ? ' active' : '')
+    item.style.paddingLeft = indent
+    item.textContent = base
+    item.addEventListener('click', () => void open(rel))
+    item.addEventListener('dblclick', (e) => {
+      e.preventDefault()
+      renamingRel = rel
+      void refreshTree()
+    })
+    wireDrag(item, { kind: 'note', rel })
+    wireDrop(item, parentOf(rel))
+    treeEl.appendChild(item)
+  }
+
+  // Дроп в пустое место списка = перенос в корень вольта
+  treeEl.addEventListener('dragover', (e) => {
+    if (!dragging) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+  })
+  treeEl.addEventListener('drop', (e) => {
+    e.preventDefault()
+    void dropTo('')
+  })
+
+  const doMoveFolder = async (oldRel: string, newRel: string) => {
+    if (newRel === oldRel) return
+    if (snapshot.folders.includes(newRel)) {
+      notify('Там уже есть папка с таким именем')
+      return
+    }
+    // Активная заметка внутри папки переезжает вместе с ней
+    const affected = activeNote && activeNote.startsWith(oldRel + '/') ? activeNote : null
+    if (affected) {
+      activeNote = null
+      await session?.destroy()
+      session = null
+    }
+    // Состояние свёрнутости следует за новыми путями
+    for (const c of [...collapsed]) {
+      if (c === oldRel || c.startsWith(oldRel + '/')) {
+        collapsed.delete(c)
+        collapsed.add(newRel + c.slice(oldRel.length))
       }
     }
+    await moveFolder(oldRel, newRel)
+    await refreshTree()
+    if (affected) await open(newRel + affected.slice(oldRel.length))
+  }
+
+  const doRenameFolder = async (oldRel: string, rawName: string) => {
+    renamingFolder = null
+    const clean = rawName.trim().replace(/\//g, '')
+    if (!clean || clean === baseOf(oldRel)) return void refreshTree()
+    const dir = parentOf(oldRel)
+    await doMoveFolder(oldRel, dir ? `${dir}/${clean}` : clean)
   }
 
   // Переименование двигает вместе с .md и sidecar, и share.json, поэтому
@@ -1285,6 +1467,18 @@ async function startVaultMode() {
     await activateSession(await openNote(rel, currentUser()), rel.replace(/\.md$/, ''))
     await refreshTree()
   }
+
+  document.querySelector('#new-folder')!.addEventListener('click', async () => {
+    // Как с заметками: «Новая папка[ N]» без диалога, сразу инлайн-переименование
+    const { folders } = await listEntries()
+    const taken = new Set(folders.filter((f) => !f.includes('/')))
+    const base = 'Новая папка'
+    let name = base
+    for (let n = 1; taken.has(name); n++) name = `${base} ${n}`
+    await createFolder(name)
+    renamingFolder = name
+    await refreshTree()
+  })
 
   document.querySelector('#new-note')!.addEventListener('click', async () => {
     // Как в Obsidian: создаём «Без названия» (потом «Без названия 1», …) и сразу
