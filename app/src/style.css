@@ -39,6 +39,14 @@ body {
   flex-direction: column;
 }
 
+.sidebar-version {
+  margin-top: auto;
+  padding: 10px 12px;
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
 .sidebar-head {
   display: flex;
   align-items: center;
@@ -934,9 +942,74 @@ header .spacer {
 }
 
 .cm-editor .cm-content {
-  padding: 20px 8px;
-  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  padding: 20px 16px;
+  /* Обычный текст — пропорциональным шрифтом (как в Obsidian);
+     моноширинный остаётся только у кода (.cm-md-mono / .cm-codeblock-line) */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
   line-height: 1.6;
+}
+
+/* --- Живой markdown (см. live-markdown.ts) --- */
+.cm-md-h1, .cm-md-h2, .cm-md-h3, .cm-md-h4, .cm-md-h5, .cm-md-h6 {
+  font-weight: 700;
+}
+.cm-md-h1 { font-size: 1.7em; }
+.cm-md-h2 { font-size: 1.45em; }
+.cm-md-h3 { font-size: 1.25em; }
+.cm-md-h4 { font-size: 1.1em; }
+.cm-md-h6 { color: var(--muted); }
+
+.cm-md-strong { font-weight: 700; }
+.cm-md-em { font-style: italic; }
+.cm-md-strike { text-decoration: line-through; color: var(--muted); }
+.cm-md-link { color: var(--accent); text-decoration: underline; }
+.cm-md-url { color: var(--muted); }
+.cm-md-mark { color: #b3aca0; }
+
+.cm-md-mono {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 0.9em;
+  background: #f2f1ec;
+  border-radius: 4px;
+  padding: 0 3px;
+}
+
+.cm-codeblock-line {
+  background: #f6f5f1;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 13px;
+}
+.cm-codeblock-line .cm-md-mono {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.cm-quote-line {
+  border-left: 3px solid #d8cdb4;
+  padding-left: 12px;
+  color: #57534e;
+}
+
+.cm-list-bullet {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.cm-hr {
+  display: inline-block;
+  width: 100%;
+  height: 4px;
+  vertical-align: middle;
+  background: linear-gradient(var(--border), var(--border)) center / 100% 1px no-repeat;
+}
+
+.cm-task-checkbox {
+  accent-color: var(--accent);
+  margin: 0 2px 0 0;
+  vertical-align: middle;
+  cursor: pointer;
 }
 
 .cm-editor .cm-gutters {

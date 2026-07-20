@@ -1,9 +1,19 @@
 import './style.css'
-import { EditorView, basicSetup } from 'codemirror'
 import { EditorState } from '@codemirror/state'
-import { keymap } from '@codemirror/view'
+import {
+  EditorView,
+  keymap,
+  highlightSpecialChars,
+  drawSelection,
+  dropCursor
+} from '@codemirror/view'
+import { history, defaultKeymap, historyKeymap } from '@codemirror/commands'
+import { indentOnInput, bracketMatching } from '@codemirror/language'
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
+import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import type { Extension } from '@codemirror/state'
-import { markdown } from '@codemirror/lang-markdown'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { liveMarkdown } from './live-markdown'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import { isTauri } from '@tauri-apps/api/core'
 import * as random from 'lib0/random'
@@ -80,6 +90,7 @@ app.innerHTML = `
              <button id="new-note" title="Новая заметка">+</button>
            </div>
            <nav id="file-tree"></nav>
+           <div class="sidebar-version" id="sidebar-version"></div>
          </aside>`
       : ''
   }
@@ -268,9 +279,23 @@ async function activateSession(next: NoteSession, title: string) {
   renderStatus()
   renderShareButton()
 
+  // Свой набор вместо basicSetup: без номеров строк и гуттеров — редактор
+  // и просмотр md едины (как в Obsidian), обрамление кода тут лишнее.
   const extensions: Extension[] = [
-    basicSetup,
-    markdown(),
+    highlightSpecialChars(),
+    history(),
+    drawSelection(),
+    dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(),
+    bracketMatching(),
+    closeBrackets(),
+    highlightSelectionMatches(),
+    keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap]),
+    // markdownLanguage = CommonMark + GFM (зачёркивание, чекбоксы задач);
+    // дефолтный markdown() — только CommonMark.
+    markdown({ base: markdownLanguage }),
+    liveMarkdown(),
     EditorView.lineWrapping,
     keymap.of(yUndoManagerKeymap),
     yCollab(session.ytext, session.awareness, { undoManager: session.undoManager }),
@@ -1152,6 +1177,12 @@ function mountLanding() {
 async function startVaultMode() {
   await initVault()
   const treeEl = document.querySelector<HTMLElement>('#file-tree')!
+
+  // Версия внизу сайдбара (из tauri.conf.json, видна после автообновлений)
+  void import('@tauri-apps/api/app').then(async ({ getVersion }) => {
+    const el = document.querySelector<HTMLElement>('#sidebar-version')
+    if (el) el.textContent = `Franke v${await getVersion()}`
+  })
 
   // Заметка, которую сейчас переименовывают инлайн (двойным кликом). Хранится
   // как состояние, чтобы перерисовка дерева не сбивала поле ввода.
