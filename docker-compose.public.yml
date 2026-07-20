@@ -30,6 +30,8 @@ services:
       - DOMAIN=${DOMAIN:?задайте DOMAIN=relay.example.com}
     volumes:
       - ./relay/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Зеркало релизов (наполняет relay/mirror-sync.py по крону на хосте)
+      - ./mirror:/srv/updates:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:

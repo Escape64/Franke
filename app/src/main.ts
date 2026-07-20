@@ -1142,7 +1142,7 @@ function mountLanding() {
         </div>
         <p class="landing-note">macOS при первом запуске: правый клик по приложению → «Открыть» (сборка пока без подписи Apple). Windows: «Подробнее» → «Выполнить в любом случае».</p>
         <p class="landing-guest">Получили ссылку на заметку? Просто откройте её — редактор работает прямо в браузере, устанавливать ничего не нужно.</p>
-        <p class="landing-links"><a href="https://github.com/Escape64/Franke">GitHub</a> · relay можно поднять свой: <code>docker compose up -d</code></p>
+        <p class="landing-links"><a href="https://github.com/Escape64/Franke">GitHub</a> · <a href="https://franke-relay.duckdns.org/updates/">зеркало для скачивания без VPN</a> · relay можно поднять свой: <code>docker compose up -d</code></p>
       </div>
     </div>
   `

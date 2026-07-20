@@ -1,6 +1,14 @@
 # TLS-терминация для публичного relay (wss://). Caddy сам получает и обновляет
 # сертификат Let's Encrypt по домену из env DOMAIN. WebSocket проксируется
 # без дополнительной настройки.
+#
+# /updates/* — зеркало релизов для пользователей с заблокированным github.com:
+# статические файлы из папки mirror/ (наполняет relay/mirror-sync.py по крону),
+# browse включён, чтобы люди могли скачать установщик прямо из листинга.
 {$DOMAIN} {
+	handle_path /updates/* {
+		root * /srv/updates
+		file_server browse
+	}
 	reverse_proxy relay:1234
 }
