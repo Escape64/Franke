@@ -14,6 +14,8 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import type { Extension } from '@codemirror/state'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { liveMarkdown } from './live-markdown'
+import { editorContextMenu } from './editor-menu'
+import { formattingKeymap } from './editor-commands'
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next'
 import { isTauri } from '@tauri-apps/api/core'
 import * as random from 'lib0/random'
@@ -304,11 +306,18 @@ async function activateSession(next: NoteSession, title: string) {
     bracketMatching(),
     closeBrackets(),
     highlightSelectionMatches(),
-    keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap]),
+    keymap.of([
+      ...formattingKeymap,
+      ...closeBracketsKeymap,
+      ...defaultKeymap,
+      ...searchKeymap,
+      ...historyKeymap
+    ]),
     // markdownLanguage = CommonMark + GFM (зачёркивание, чекбоксы задач);
     // дефолтный markdown() — только CommonMark.
     markdown({ base: markdownLanguage }),
     liveMarkdown(),
+    editorContextMenu(),
     EditorView.lineWrapping,
     keymap.of(yUndoManagerKeymap),
     yCollab(session.ytext, session.awareness, { undoManager: session.undoManager }),
