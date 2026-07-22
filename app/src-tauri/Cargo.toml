@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.7"
+version = "0.1.8"
 description = "Franke — local-first заметки с живой коллаборацией без облака"
 authors = ["Artem <escape64dc@gmail.com>"]
 license = ""
@@ -24,6 +24,7 @@ log = "0.4"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-fs = { version = "2", features = ["watch"] }
+tauri-plugin-dialog = "2.7.2"
 
 # Автообновление — только десктоп (на мобильных обновления идут через сторы)
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]

@@ -34,25 +34,92 @@ export function getVaultRoot(): string {
   return vaultRoot
 }
 
+/** Имя вольта = имя его папки (последний сегмент пути). */
+export function vaultName(): string {
+  return vaultRoot.slice(vaultRoot.replace(/\/+$/, '').lastIndexOf('/') + 1) || vaultRoot
+}
+
+const VAULT_PATH_KEY = 'franke-vault-path'
+const RECENT_VAULTS_KEY = 'franke-recent-vaults'
+
+/** Список недавних вольтов (пути), самый свежий — первым. */
+export function recentVaults(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_VAULTS_KEY)
+    return raw ? (JSON.parse(raw) as string[]) : []
+  } catch {
+    return []
+  }
+}
+
+function rememberVault(path: string) {
+  const list = [path, ...recentVaults().filter((p) => p !== path)].slice(0, 8)
+  localStorage.setItem(RECENT_VAULTS_KEY, JSON.stringify(list))
+  localStorage.setItem(VAULT_PATH_KEY, path)
+}
+
+/** Есть ли рядом папка .obsidian — значит это вольт Obsidian. Отказоустойчиво:
+ * проблема доступа не должна ронять запуск, поэтому ошибку глотаем. */
+export async function isObsidianVault(): Promise<boolean> {
+  try {
+    return await exists(`${vaultRoot}/.obsidian`)
+  } catch {
+    return false
+  }
+}
+
 const WELCOME_NOTE = 'Добро пожаловать.md'
 const WELCOME_TEXT = `# Добро пожаловать в Franke
 
-Это ваша первая заметка. Файл лежит в ~/FrankeVault — можете открыть его любым редактором.
+Это ваша первая заметка. Файлы вольта — обычные .md на диске, можете открыть их любым редактором (в том числе Obsidian).
 
 Правки, сделанные снаружи, приложение подхватит на лету.
 `
 
+/**
+ * Инициализация активного вольта. Путь берётся из localStorage (ранее выбранный
+ * пользователем), иначе — дефолтный ~/FrankeVault (создаётся при первом запуске
+ * с приветственной заметкой). Приветствие пишем ТОЛЬКО в свежесозданный дефолт —
+ * в чужую/существующую папку (в т.ч. вольт Obsidian) ничего не добавляем.
+ */
 export async function initVault(): Promise<string> {
-  const home = (await homeDir()).replace(/\/+$/, '')
-  vaultRoot = `${home}/FrankeVault`
-  if (!(await exists(vaultRoot))) {
-    await mkdir(vaultRoot, { recursive: true })
-    await writeTextFile(`${vaultRoot}/${WELCOME_NOTE}`, WELCOME_TEXT)
+  const saved = (() => {
+    try {
+      return localStorage.getItem(VAULT_PATH_KEY)
+    } catch {
+      return null
+    }
+  })()
+
+  if (saved && (await exists(saved))) {
+    return activateVault(saved)
   }
+
+  const home = (await homeDir()).replace(/\/+$/, '')
+  const def = `${home}/FrankeVault`
+  const fresh = !(await exists(def))
+  if (fresh) {
+    await mkdir(def, { recursive: true })
+    await writeTextFile(`${def}/${WELCOME_NOTE}`, WELCOME_TEXT)
+  }
+  return activateVault(def)
+}
+
+/** Переключить активный вольт на указанную папку (создаёт .franke при нужде). */
+export async function activateVault(path: string): Promise<string> {
+  vaultRoot = path.replace(/\/+$/, '')
   if (!(await exists(`${vaultRoot}/${SIDECAR_DIR}`))) {
     await mkdir(`${vaultRoot}/${SIDECAR_DIR}`, { recursive: true })
   }
+  rememberVault(vaultRoot)
   return vaultRoot
+}
+
+/** Диалог выбора папки вольта. Возвращает путь или null (отмена). */
+export async function pickVaultFolder(): Promise<string | null> {
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const picked = await open({ directory: true, multiple: false, title: 'Выберите папку вольта' })
+  return typeof picked === 'string' ? picked : null
 }
 
 export function absPath(rel: string): string {

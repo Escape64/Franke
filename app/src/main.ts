@@ -40,6 +40,12 @@ import {
   renameNote,
   moveFolder,
   watchVault,
+  activateVault,
+  pickVaultFolder,
+  recentVaults,
+  getVaultRoot,
+  vaultName,
+  isObsidianVault,
   type VaultEntries
 } from './vault'
 import {
@@ -98,7 +104,11 @@ app.innerHTML = `
     inTauri
       ? `<aside id="sidebar">
            <div class="sidebar-head">
-             <span>FrankeVault</span>
+             <button id="vault-switch" class="vault-switch" title="Сменить вольт">
+               <span id="vault-name"></span>
+               <span id="vault-obsidian" class="obsidian-badge hidden" title="Вольт Obsidian — Franke работает с ним напрямую">◆</span>
+               <span class="vault-caret">▾</span>
+             </button>
              <span class="sidebar-actions">
                <button id="new-note" title="Новая заметка"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.4 2.6a2.1 2.1 0 0 1 3 3L13 14l-4 1 1-4Z"/></svg></button>
                <button id="new-folder" title="Новая папка"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg></button>
@@ -1534,17 +1544,101 @@ async function startVaultMode() {
     void refreshTree()
   })
 
-  await watchVault(async (changedRels) => {
-    if (activeNote && changedRels.includes(activeNote)) {
-      const { readNote } = await import('./vault')
-      const text = await readNote(activeNote)
-      if (text !== null) session?.reconcileFromDisk(text)
-    }
+  // Вотчер привязан к папке вольта — при смене вольта его надо перезапустить.
+  let unwatch: (() => void) | null = null
+  const startWatcher = async () => {
+    if (unwatch) unwatch()
+    unwatch = await watchVault(async (changedRels) => {
+      if (activeNote && changedRels.includes(activeNote)) {
+        const { readNote } = await import('./vault')
+        const text = await readNote(activeNote)
+        if (text !== null) session?.reconcileFromDisk(text)
+      }
+      await refreshTree()
+    })
+  }
+  await startWatcher()
+
+  // --- Переключатель вольта (шапка сайдбара) ---
+  const refreshVaultName = async () => {
+    document.querySelector('#vault-name')!.textContent = vaultName()
+    const badge = document.querySelector('#vault-obsidian')!
+    badge.classList.toggle('hidden', !(await isObsidianVault()))
+  }
+
+  const switchVault = async (path: string) => {
+    if (path === getVaultRoot()) return
+    activeNote = null
+    if (view) view.destroy()
+    view = null
+    await session?.destroy()
+    session = null
+    docNameEl.textContent = ''
+    collapsed.clear()
+    await activateVault(path)
+    await startWatcher()
+    await refreshVaultName()
     await refreshTree()
-  })
+    const ns = await listNotes()
+    if (ns.length) await open(ns[0])
+  }
+
+  const openVaultMenu = () => {
+    const cur = getVaultRoot()
+    const nameOf = (p: string) => p.replace(/\/+$/, '').slice(p.replace(/\/+$/, '').lastIndexOf('/') + 1)
+    const items: MenuRow[] = recentVaults().map((p) => ({
+      label: (p === cur ? '✓ ' : '') + nameOf(p),
+      sub: p,
+      run: () => void switchVault(p)
+    }))
+    items.push({
+      label: '📂 Открыть папку…',
+      run: async () => {
+        const picked = await pickVaultFolder()
+        if (picked) await switchVault(picked)
+      }
+    })
+    showSimpleMenu(document.querySelector('#vault-switch')!, items)
+  }
+  document.querySelector('#vault-switch')!.addEventListener('click', openVaultMenu)
+  await refreshVaultName()
 
   const notes = await listNotes()
-  await open(notes[0] ?? 'Добро пожаловать.md')
+  if (notes.length) await open(notes[0])
+}
+
+interface MenuRow {
+  label: string
+  sub?: string
+  run: () => void
+}
+
+// Простое выпадающее меню под якорем (для переключателя вольта).
+function showSimpleMenu(anchor: HTMLElement, items: MenuRow[]) {
+  document.querySelector('.simple-menu')?.remove()
+  const menu = document.createElement('div')
+  menu.className = 'ctx-menu simple-menu'
+  for (const it of items) {
+    const b = document.createElement('button')
+    b.className = 'ctx-item'
+    b.innerHTML = `<span>${escapeHtml(it.label)}</span>${it.sub ? `<span class="ctx-shortcut">${escapeHtml(it.sub)}</span>` : ''}`
+    b.addEventListener('click', () => {
+      menu.remove()
+      it.run()
+    })
+    menu.appendChild(b)
+  }
+  document.body.appendChild(menu)
+  const r = anchor.getBoundingClientRect()
+  menu.style.left = `${r.left}px`
+  menu.style.top = `${r.bottom + 4}px`
+  const close = (e: MouseEvent) => {
+    if (!menu.contains(e.target as Node)) {
+      menu.remove()
+      document.removeEventListener('mousedown', close, true)
+    }
+  }
+  setTimeout(() => document.addEventListener('mousedown', close, true), 0)
 }
 
 function currentUser(): UserInfo {

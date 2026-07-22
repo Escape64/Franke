@@ -57,6 +57,54 @@ body {
   color: var(--muted);
 }
 
+.vault-switch {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.vault-switch:hover {
+  background: var(--border);
+}
+
+#vault-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vault-caret {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.obsidian-badge {
+  color: #7c6bd6;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.simple-menu .ctx-item {
+  gap: 16px;
+}
+
+.simple-menu .ctx-shortcut {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
 .sidebar-head button {
   border: none;
   background: transparent;
@@ -103,7 +151,7 @@ body {
 .sidebar-actions button {
   display: flex;
   align-items: center;
-  padding: 4px 6px;
+  padding: 4px 5px;
 }
 
 .sidebar-actions svg {
