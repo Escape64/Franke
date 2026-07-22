@@ -7,15 +7,8 @@
 // Дерево разбора даёт @codemirror/lang-markdown (база markdownLanguage —
 // CommonMark + GFM: зачёркивание, чекбоксы задач). Таблицы и картинки пока
 // не рендерим — только стилизуем (медиа-блобы — отдельный этап).
-import {
-  Decoration,
-  EditorView,
-  ViewPlugin,
-  ViewUpdate,
-  WidgetType,
-  type DecorationSet
-} from '@codemirror/view'
-import { EditorState, type Range } from '@codemirror/state'
+import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
+import { EditorState, StateField, type Range } from '@codemirror/state'
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 
@@ -93,8 +86,166 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
-  const { state } = view
+// --- Таблицы ---
+// GFM-таблица (markdown с `|`) рендерится в настоящий <table>, когда курсор вне
+// её строк; клик в ячейку возвращает курсор в markdown (строки становятся
+// «активными» → сырой вид), а кнопки «+» под и справа добавляют строку/столбец.
+interface Cell {
+  text: string
+  start: number // смещение содержимого ячейки внутри строки
+}
+
+function parseCells(lineText: string): Cell[] {
+  const cells: Cell[] = []
+  let i = 0
+  if (lineText[i] === '|') i++
+  let cellStart = i
+  for (; i <= lineText.length; i++) {
+    if (i === lineText.length || lineText[i] === '|') {
+      const raw = lineText.slice(cellStart, i)
+      const trimmedStart = cellStart + (raw.length - raw.trimStart().length)
+      cells.push({ text: raw.trim(), start: trimmedStart })
+      cellStart = i + 1
+      if (i === lineText.length) break
+    }
+  }
+  // Хвостовая ячейка от завершающего `|` — лишняя
+  if (cells.length && lineText.trimEnd().endsWith('|')) cells.pop()
+  return cells
+}
+
+function isDelimiterRow(text: string): boolean {
+  const t = text.trim()
+  return /^[\s|:-]+$/.test(t) && t.includes('-')
+}
+
+function buildRow(cells: string[]): string {
+  return '| ' + cells.join(' | ') + ' |'
+}
+
+/** Строки таблицы начиная с blockStart (все подряд содержат `|`). */
+function tableLines(state: EditorView['state'], blockStart: number) {
+  const start = state.doc.lineAt(blockStart).number
+  const out = []
+  for (let n = start; n <= state.doc.lines; n++) {
+    const l = state.doc.line(n)
+    if (l.text.includes('|')) out.push(l)
+    else break
+  }
+  return out
+}
+
+class TableWidget extends WidgetType {
+  constructor(
+    private blockStart: number,
+    private raw: string
+  ) {
+    super()
+  }
+  eq(o: TableWidget): boolean {
+    return o.blockStart === this.blockStart && o.raw === this.raw
+  }
+
+  private editCell(e: MouseEvent, view: EditorView, rowInLines: number, cellStart: number) {
+    e.preventDefault()
+    const firstNo = view.state.doc.lineAt(this.blockStart).number
+    const line = view.state.doc.line(firstNo + rowInLines)
+    view.dispatch({ selection: { anchor: Math.min(line.from + cellStart, line.to) } })
+    view.focus()
+  }
+
+  private addRow(view: EditorView) {
+    const lines = tableLines(view.state, this.blockStart)
+    if (!lines.length) return
+    const cols = parseCells(lines[0].text).length
+    const last = lines[lines.length - 1]
+    view.dispatch({ changes: { from: last.to, insert: '\n' + buildRow(Array(cols).fill('')) } })
+    view.focus()
+  }
+
+  private addColumn(view: EditorView) {
+    const lines = tableLines(view.state, this.blockStart)
+    if (!lines.length) return
+    const changes = lines.map((l) => {
+      const cells = parseCells(l.text).map((c) => c.text)
+      cells.push(isDelimiterRow(l.text) ? '---' : '')
+      return { from: l.from, to: l.to, insert: buildRow(cells) }
+    })
+    view.dispatch({ changes })
+    view.focus()
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const rows = this.raw.split('\n').map((l) => parseCells(l))
+    const wrap = document.createElement('div')
+    wrap.className = 'cm-table-wrap'
+
+    const rowBox = document.createElement('div')
+    rowBox.className = 'cm-table-row'
+    const table = document.createElement('table')
+    table.className = 'cm-md-table'
+
+    const thead = document.createElement('thead')
+    const htr = document.createElement('tr')
+    for (const c of rows[0] ?? []) {
+      const th = document.createElement('th')
+      th.textContent = c.text
+      th.onmousedown = (e) => this.editCell(e, view, 0, c.start)
+      htr.appendChild(th)
+    }
+    thead.appendChild(htr)
+    table.appendChild(thead)
+
+    const tbody = document.createElement('tbody')
+    for (let r = 2; r < rows.length; r++) {
+      const tr = document.createElement('tr')
+      for (const c of rows[r]) {
+        const td = document.createElement('td')
+        td.textContent = c.text
+        td.onmousedown = (e) => this.editCell(e, view, r, c.start)
+        tr.appendChild(td)
+      }
+      tbody.appendChild(tr)
+    }
+    table.appendChild(tbody)
+    rowBox.appendChild(table)
+
+    if (!view.state.readOnly) {
+      const addCol = document.createElement('button')
+      addCol.className = 'cm-table-addcol'
+      addCol.textContent = '+'
+      addCol.title = 'Добавить столбец справа'
+      addCol.onmousedown = (e) => {
+        e.preventDefault()
+        this.addColumn(view)
+      }
+      rowBox.appendChild(addCol)
+    }
+    wrap.appendChild(rowBox)
+
+    if (!view.state.readOnly) {
+      const addRow = document.createElement('button')
+      addRow.className = 'cm-table-addrow'
+      addRow.textContent = '+'
+      addRow.title = 'Добавить строку снизу'
+      addRow.onmousedown = (e) => {
+        e.preventDefault()
+        this.addRow(view)
+      }
+      wrap.appendChild(addRow)
+    }
+    return wrap
+  }
+
+  ignoreEvent(): boolean {
+    return false
+  }
+}
+
+// Обходим весь документ (не только видимую область): блочные декорации таблиц
+// должны быть известны редактору ДО раскладки, поэтому живут в StateField, а он
+// не имеет доступа к вьюпорту. Для заметок это дёшево.
+function buildDecorations(state: EditorState): DecorationSet {
   const doc = state.doc
 
   // Строки, затронутые курсором/выделением: на них markdown показывается сырым.
@@ -130,11 +281,33 @@ function buildDecorations(view: EditorView): DecorationSet {
   let fenceActive = false
   let linkActive = false
 
-  for (const { from, to } of view.visibleRanges) {
-    syntaxTree(state).iterate({
-      from,
-      to,
-      enter: (node) => {
+  // Проход по таблицам: неактивные (без курсора внутри) заменяем на HTML-виджет
+  // блочной декорацией; их узлы в основном обходе пропускаем, чтобы внутренние
+  // маркеры ячеек не конфликтовали с блочной заменой.
+  const tableSkip: { from: number; to: number }[] = []
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      if (node.name !== 'Table') return
+      if (isActive(node.from, node.to)) return
+      const firstLine = doc.lineAt(node.from)
+      const end = Math.min(node.to, doc.length)
+      let lastLine = doc.lineAt(end)
+      if (lastLine.from === end && end > node.from) lastLine = doc.lineAt(end - 1)
+      const raw = doc.sliceString(firstLine.from, lastLine.to)
+      decos.push(
+        Decoration.replace({
+          widget: new TableWidget(firstLine.from, raw),
+          block: true
+        }).range(firstLine.from, lastLine.to)
+      )
+      tableSkip.push({ from: firstLine.from, to: lastLine.to })
+    }
+  })
+
+  syntaxTree(state).iterate({
+    enter: (node) => {
+      {
+        for (const t of tableSkip) if (node.from >= t.from && node.from < t.to) return false
         switch (node.name) {
           case 'HeaderMark':
             if (!isActive(node.from, node.to)) hideWithSpace(node.from, node.to)
@@ -223,8 +396,8 @@ function buildDecorations(view: EditorView): DecorationSet {
             break
         }
       }
-    })
-  }
+    }
+  })
 
   for (const m of bulletMarks) {
     if (activeLines.has(m.line)) continue
@@ -242,21 +415,19 @@ function buildDecorations(view: EditorView): DecorationSet {
   return Decoration.set(decos, true)
 }
 
-const livePlugin = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet
-    constructor(view: EditorView) {
-      this.decorations = buildDecorations(view)
-    }
-    update(u: ViewUpdate) {
-      if (u.docChanged || u.selectionSet || u.viewportChanged) {
-        this.decorations = buildDecorations(u.view)
-      }
-    }
+// StateField (не ViewPlugin): блочные декорации таблиц должны быть известны до
+// раскладки. Пересчитываем на любое изменение текста или выделения.
+const liveField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildDecorations(state)
   },
-  { decorations: (v) => v.decorations }
-)
+  update(deco, tr) {
+    if (tr.docChanged || tr.selection) return buildDecorations(tr.state)
+    return deco.map(tr.changes)
+  },
+  provide: (f) => EditorView.decorations.from(f)
+})
 
 export function liveMarkdown() {
-  return [livePlugin, syntaxHighlighting(mdHighlight)]
+  return [liveField, syntaxHighlighting(mdHighlight)]
 }

@@ -115,7 +115,20 @@ function insertBlock(view: EditorView, text: string): boolean {
 }
 
 export function insertTable(view: EditorView): boolean {
-  return insertBlock(view, '| Колонка 1 | Колонка 2 |\n| --- | --- |\n|  |  |')
+  if (view.state.readOnly) return false
+  const r = view.state.selection.main
+  const line = view.state.doc.lineAt(r.from)
+  // GFM распознаёт таблицу только если перед ней пустая строка (иначе строки
+  // сливаются в абзац). После — тоже перенос, чтобы отделить от текста ниже.
+  const before = line.text === '' ? '' : '\n\n'
+  const table = '| Колонка 1 | Колонка 2 |\n| --- | --- |\n|  |  |'
+  const insert = before + table + '\n'
+  view.dispatch({
+    changes: { from: r.from, to: r.to, insert },
+    selection: { anchor: r.from + insert.length }
+  })
+  view.focus()
+  return true
 }
 
 export function insertHr(view: EditorView): boolean {
