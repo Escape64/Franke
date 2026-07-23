@@ -39,6 +39,7 @@ import {
   createFolder,
   renameNote,
   moveFolder,
+  writeNote,
   watchVault,
   activateVault,
   pickVaultFolder,
@@ -1279,21 +1280,65 @@ async function startVaultMode() {
     })
   }
 
+  // Внешнее перетаскивание .md из системы: WKWebView отдаёт файлы через HTML5
+  // drop (при dragDropEnabled:false), путь недоступен — читаем содержимое.
+  const hasFiles = (e: DragEvent) =>
+    !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')
+
+  const importFiles = async (files: FileList, targetFolder: string) => {
+    const existing = new Set(snapshot.notes)
+    const relOf = (folder: string, n: string) => (folder ? `${folder}/${n}.md` : `${n}.md`)
+    let imported = 0
+    let skipped = 0
+    let firstRel: string | null = null
+    for (const file of Array.from(files)) {
+      if (!file.name.toLowerCase().endsWith('.md')) {
+        skipped++
+        continue
+      }
+      let text = ''
+      try {
+        text = await file.text()
+      } catch {
+        skipped++
+        continue
+      }
+      const base = file.name.replace(/\.md$/i, '')
+      let name = base
+      for (let i = 1; existing.has(relOf(targetFolder, name)); i++) name = `${base} ${i}`
+      const rel = relOf(targetFolder, name)
+      await writeNote(rel, text)
+      existing.add(rel)
+      firstRel = firstRel ?? rel
+      imported++
+    }
+    await refreshTree()
+    if (imported) {
+      notify(`Импортировано: ${imported}${skipped ? ` · пропущено (не .md): ${skipped}` : ''}`)
+      if (firstRel) await open(firstRel)
+    } else {
+      notify('Перетаскивать можно только .md-файлы')
+    }
+  }
+
   // Дроп на папку; на заметку — цель её папка; на пустое место списка — корень.
+  // Тот же обработчик принимает и внешние файлы (импорт), и внутренний перенос.
   const wireDrop = (el: HTMLElement, targetFolder: string) => {
     el.addEventListener('dragover', (e) => {
-      if (!dragging) return
+      if (!dragging && !hasFiles(e)) return
       e.preventDefault()
       e.stopPropagation()
       el.classList.add('drag-over')
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+      if (e.dataTransfer) e.dataTransfer.dropEffect = dragging ? 'move' : 'copy'
     })
     el.addEventListener('dragleave', () => el.classList.remove('drag-over'))
     el.addEventListener('drop', (e) => {
       e.preventDefault()
       e.stopPropagation()
       el.classList.remove('drag-over')
-      void dropTo(targetFolder)
+      const files = e.dataTransfer?.files
+      if (files && files.length) void importFiles(files, targetFolder)
+      else void dropTo(targetFolder)
     })
   }
 
@@ -1410,15 +1455,26 @@ async function startVaultMode() {
     treeEl.appendChild(item)
   }
 
-  // Дроп в пустое место списка = перенос в корень вольта
+  // Дроп в пустое место списка = корень вольта (перенос или импорт файлов)
   treeEl.addEventListener('dragover', (e) => {
-    if (!dragging) return
+    if (!dragging && !hasFiles(e)) return
     e.preventDefault()
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+    if (e.dataTransfer) e.dataTransfer.dropEffect = dragging ? 'move' : 'copy'
   })
   treeEl.addEventListener('drop', (e) => {
     e.preventDefault()
-    void dropTo('')
+    const files = e.dataTransfer?.files
+    if (files && files.length) void importFiles(files, '')
+    else void dropTo('')
+  })
+
+  // Файл, брошенный мимо списка (напр. на редактор), не должен открываться
+  // как навигация webview — глушим дефолт по всему окну.
+  document.addEventListener('dragover', (e) => {
+    if (hasFiles(e)) e.preventDefault()
+  })
+  document.addEventListener('drop', (e) => {
+    if (hasFiles(e)) e.preventDefault()
   })
 
   const doMoveFolder = async (oldRel: string, newRel: string) => {

@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.1.8"
+version = "0.1.9"
 description = "Franke — local-first заметки с живой коллаборацией без облака"
 authors = ["Artem <escape64dc@gmail.com>"]
 license = ""
