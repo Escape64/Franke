@@ -1,7 +1,7 @@
 {
   "$schema": "../../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Franke",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "identifier": "com.escape64.franke",
   "build": {
     "frontendDist": "../dist",

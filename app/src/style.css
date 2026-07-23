@@ -1250,7 +1250,29 @@ header .spacer {
   min-width: 64px;
   text-align: left;
   font-size: 14px;
+}
+
+.cm-td-edit {
   cursor: text;
+}
+
+.cm-td-edit:hover {
+  background: #f7f6fb;
+}
+
+/* Плавающий редактор ячейки — поверх клетки, вне CM (в document.body) */
+.cm-cell-editor {
+  position: fixed;
+  z-index: 1000;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  border-radius: 3px;
+  outline: none;
+  background: var(--panel);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  padding: 4px 10px;
 }
 
 .cm-md-table th {
