@@ -210,7 +210,7 @@ class TableWidget extends WidgetType {
         cellEl.addEventListener('mousedown', (e) => {
           e.preventDefault()
           e.stopPropagation()
-          openCellEditor(view, this.blockStart, rowInLines, cellIndex, cellEl, (v) =>
+          openCellEditor(view, this.blockStart, rowInLines, cellIndex, cellEl.getBoundingClientRect(), (v) =>
             this.writeCell(view, rowInLines, cellIndex, v)
           )
         })
@@ -265,31 +265,47 @@ class TableWidget extends WidgetType {
   }
 }
 
+// Открытый сейчас редактор ячейки — чтобы зафиксировать его перед открытием
+// другого (клик в соседнюю ячейку не должен терять введённое).
+let activeCellCommit: (() => void) | null = null
+
 // Плавающий редактор ячейки: поле ввода в document.body поверх ячейки. Живёт
-// ВНЕ contentDOM редактора, поэтому CM не отбирает у него фокус. По Enter/blur
-// пишет значение в markdown, по Tab — переходит к соседней ячейке.
+// ВНЕ contentDOM редактора, поэтому CM не отбирает у него фокус. Пишет значение
+// в markdown по Enter/blur/Tab и при открытии другой ячейки; растёт по вводу.
 function openCellEditor(
   view: EditorView,
   blockStart: number,
   rowInLines: number,
   cellIndex: number,
-  cellEl: HTMLElement,
+  rect: DOMRect,
   write: (value: string) => void
 ) {
-  document.querySelector('.cm-cell-editor')?.remove()
-  const rect = cellEl.getBoundingClientRect()
+  activeCellCommit?.() // сохранить ранее открытую ячейку, если была
+
+  // Текущий текст ячейки читаем из живого документа (после возможной пересборки).
+  const lineNo = view.state.doc.lineAt(blockStart).number + rowInLines
+  const initial =
+    lineNo <= view.state.doc.lines ? (parseCells(view.state.doc.line(lineNo).text)[cellIndex]?.text ?? '') : ''
+
   const input = document.createElement('input')
   input.className = 'cm-cell-editor'
-  input.value = cellEl.textContent ?? ''
+  input.value = initial
   input.style.left = `${rect.left}px`
   input.style.top = `${rect.top}px`
-  input.style.width = `${rect.width}px`
   input.style.height = `${rect.height}px`
+
+  // Автоширина: не уже ячейки и не уже удобного минимума, дальше растёт по тексту.
+  const grow = () => {
+    input.style.width = '0'
+    input.style.width = `${Math.min(560, Math.max(140, rect.width, input.scrollWidth + 4))}px`
+  }
+  input.addEventListener('input', grow)
 
   let done = false
   const finish = (commit: boolean, moveTo?: { row: number; col: number }) => {
     if (done) return
     done = true
+    if (activeCellCommit === commitThis) activeCellCommit = null
     input.remove()
     if (commit) write(input.value)
     if (moveTo) {
@@ -304,6 +320,8 @@ function openCellEditor(
       view.focus()
     }
   }
+  const commitThis = () => finish(true)
+  activeCellCommit = commitThis
 
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -317,22 +335,31 @@ function openCellEditor(
       finish(true, { row: rowInLines, col: cellIndex + (e.shiftKey ? -1 : 1) })
     }
   })
-
   document.body.appendChild(input)
-  // Снимаем фокус с контента CM: иначе он считает себя сфокусированным и по
-  // selectionchange возвращает выделение к себе, закрывая плавающий редактор.
+  grow()
+  // Снимаем фокус с contentDOM — иначе CM по selectionchange вернёт выделение
+  // себе и закроет редактор.
   view.contentDOM.blur()
   input.focus()
   input.select()
-  const keep = () => {
-    if (!done && document.activeElement !== input) input.focus()
-  }
-  // Пару раз отбиваем возможный асинхронный перехват фокуса, затем — blur→commit.
-  requestAnimationFrame(keep)
-  setTimeout(() => {
-    keep()
-    if (!done) input.addEventListener('blur', () => finish(true))
-  }, 60)
+  // Со следующего кадра: (1) если предыдущая ячейка при сохранении расширила
+  // таблицу, переносим редактор на актуальную позицию ячейки; (2) отбиваем
+  // транзитный перехват фокуса; (3) вешаем blur→commit (клик мимо сохраняет).
+  requestAnimationFrame(() => {
+    if (done) return
+    const live = view.dom.querySelector<HTMLElement>(
+      `.cm-td-edit[data-cell="${rowInLines}:${cellIndex}"]`
+    )
+    if (live) {
+      const r = live.getBoundingClientRect()
+      input.style.left = `${r.left}px`
+      input.style.top = `${r.top}px`
+      input.style.height = `${r.height}px`
+      if (parseFloat(input.style.width) < r.width) input.style.width = `${r.width}px`
+    }
+    if (document.activeElement !== input) input.focus()
+    input.addEventListener('blur', () => finish(true))
+  })
 }
 
 // Обходим весь документ (не только видимую область): блочные декорации таблиц
