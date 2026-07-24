@@ -1229,29 +1229,41 @@ header .spacer {
 
 /* --- Отрисованная таблица (live-markdown.ts) --- */
 .cm-table-wrap {
-  display: inline-block;
+  display: block;
   margin: 8px 0;
-  vertical-align: top;
+  max-width: 100%;
 }
 
 .cm-table-row {
   display: flex;
   align-items: stretch;
+  max-width: 100%;
 }
 
+/* «Резиновая» таблица: сжимается до контента, но не шире доступной ширины;
+   длинный текст в ячейке переносится по словам и раздвигает строку (как в
+   Obsidian). table-layout:auto распределяет ширины колонок по содержимому. */
 .cm-md-table {
   border-collapse: collapse;
+  table-layout: auto;
+  width: auto;
+  max-width: 100%;
 }
 
 .cm-md-table th,
 .cm-md-table td {
   border: 1px solid var(--border);
   padding: 6px 12px;
-  min-width: 64px;
+  min-width: 60px;
   text-align: left;
   font-size: 14px;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
+/* Редактируемая ячейка (contenteditable) — правится на месте; фон при фокусе,
+   каретка. Перенос текста и рост высоты даёт сама таблица. */
 .cm-td-edit {
   cursor: text;
 }
@@ -1260,19 +1272,10 @@ header .spacer {
   background: #f7f6fb;
 }
 
-/* Плавающий редактор ячейки — поверх клетки, вне CM (в document.body) */
-.cm-cell-editor {
-  position: fixed;
-  z-index: 1000;
-  box-sizing: border-box;
-  border: 2px solid var(--accent);
-  border-radius: 3px;
-  outline: none;
-  background: var(--panel);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
-  color: var(--text);
-  padding: 4px 10px;
+.cm-td-edit:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: #f4f2ff;
 }
 
 .cm-md-table th {

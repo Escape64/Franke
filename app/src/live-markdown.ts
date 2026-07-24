@@ -146,18 +146,29 @@ class TableWidget extends WidgetType {
     return o.blockStart === this.blockStart && o.raw === this.raw
   }
 
-  // Запись одной ячейки в markdown. Позиции берём из живого состояния.
-  private writeCell(view: EditorView, rowInLines: number, cellIndex: number, value: string) {
-    const firstNo = view.state.doc.lineAt(this.blockStart).number
-    const lineNo = firstNo + rowInLines
-    if (lineNo > view.state.doc.lines) return
-    const line = view.state.doc.line(lineNo)
-    const c = parseCells(line.text)[cellIndex]
-    if (!c) return
-    const safe = value.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')
-    if (safe === c.text) return
+  // Собрать таблицу из текущего DOM ячеек и записать в markdown ОДНИМ
+  // изменением. Вызывается, когда фокус уходит из таблицы целиком: пока правишь
+  // ячейки, документ не трогаем — виджет не пересобирается, редактирование «на
+  // месте» идёт плавно, и таблица (настоящий <table>) сама переносит текст и
+  // раздвигает строки.
+  private commitTable(view: EditorView, wrap: HTMLElement) {
+    const lines = tableLines(view.state, this.blockStart)
+    if (!lines.length) return
+    const byRow = new Map<number, string[]>()
+    wrap.querySelectorAll<HTMLElement>('.cm-td-edit').forEach((el) => {
+      const [r, c] = (el.dataset.cell ?? '0:0').split(':').map(Number)
+      const cells = byRow.get(r) ?? []
+      cells[c] = (el.textContent ?? '').replace(/\r?\n/g, ' ').replace(/\|/g, '\\|')
+      byRow.set(r, cells)
+    })
+    const newLines = lines.map((l, idx) => {
+      const cells = byRow.get(idx)
+      return cells ? buildRow(Array.from(cells, (x) => x ?? '')) : l.text
+    })
+    const newRaw = newLines.join('\n')
+    if (newRaw === lines.map((l) => l.text).join('\n')) return
     view.dispatch({
-      changes: { from: line.from + c.start, to: line.from + c.start + c.text.length, insert: safe }
+      changes: { from: lines[0].from, to: lines[lines.length - 1].to, insert: newRaw }
     })
   }
 
@@ -188,31 +199,68 @@ class TableWidget extends WidgetType {
     const wrap = document.createElement('div')
     wrap.className = 'cm-table-wrap'
     wrap.contentEditable = 'false'
-    // mouseup/click внутри таблицы не должны доходить до CM — иначе он вернёт
-    // фокус себе и закроет плавающий редактор ячейки. Кнопки «+» и ячейки свои
-    // обработчики (в target-фазе) уже отработали к моменту всплытия сюда.
+    // Клики внутри таблицы не должны двигать выделение CM (иначе он перехватит
+    // фокус). НЕ preventDefault — нужно, чтобы contenteditable-ячейка получила
+    // фокус; просто не даём событию дойти до обработчиков CM.
+    wrap.addEventListener('mousedown', (e) => e.stopPropagation())
     wrap.addEventListener('mouseup', (e) => e.stopPropagation())
     wrap.addEventListener('click', (e) => e.stopPropagation())
+    // Фокус ушёл ИЗ таблицы целиком → пишем её в документ. Переход между
+    // ячейками (relatedTarget внутри) документ не трогает.
+    if (editable) {
+      wrap.addEventListener('focusout', (e) => {
+        const next = (e as FocusEvent).relatedTarget as Node | null
+        if (next && wrap.contains(next)) return
+        this.commitTable(view, wrap)
+      })
+    }
 
     const rowBox = document.createElement('div')
     rowBox.className = 'cm-table-row'
     const table = document.createElement('table')
     table.className = 'cm-md-table'
 
-    // Ячейка нередактируема на месте (иначе поле ввода воюет с фокусом CM).
-    // По клику над ячейкой всплывает плавающий редактор ВНЕ CM (см. openCellEditor).
+    const focusCell = (r: number, c: number) => {
+      const el = wrap.querySelector<HTMLElement>(`.cm-td-edit[data-cell="${r}:${c}"]`)
+      if (!el) return false
+      el.focus()
+      placeCaretEnd(el)
+      return true
+    }
+
+    // Ячейка редактируется НА МЕСТЕ (contenteditable). Выделение уходит внутрь
+    // ячейки, границу виджета CM уважает — за фокус не воюет. Таблица настоящая,
+    // поэтому ввод переносит текст и раздвигает строки сам.
     const makeCell = (tag: 'th' | 'td', rowInLines: number, cellIndex: number, text: string) => {
       const cellEl = document.createElement(tag)
       cellEl.textContent = text
       if (editable) {
         cellEl.classList.add('cm-td-edit')
         cellEl.dataset.cell = `${rowInLines}:${cellIndex}`
-        cellEl.addEventListener('mousedown', (e) => {
+        cellEl.contentEditable = 'true'
+        cellEl.spellcheck = false
+        cellEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault() // ячейка однострочна; Enter — вниз по колонке
+            focusCell(rowInLines === 0 ? 2 : rowInLines + 1, cellIndex)
+          } else if (e.key === 'Tab') {
+            e.preventDefault()
+            const all = [...wrap.querySelectorAll<HTMLElement>('.cm-td-edit')]
+            const nxt = all[all.indexOf(cellEl) + (e.shiftKey ? -1 : 1)]
+            if (nxt) {
+              nxt.focus()
+              placeCaretEnd(nxt)
+            }
+          } else if (e.key === 'Escape') {
+            e.preventDefault()
+            cellEl.blur()
+          }
+        })
+        // Вставка — только простым текстом в одну строку (без HTML и переносов).
+        cellEl.addEventListener('paste', (e) => {
           e.preventDefault()
-          e.stopPropagation()
-          openCellEditor(view, this.blockStart, rowInLines, cellIndex, cellEl.getBoundingClientRect(), (v) =>
-            this.writeCell(view, rowInLines, cellIndex, v)
-          )
+          const t = (e.clipboardData?.getData('text/plain') ?? '').replace(/\r?\n/g, ' ')
+          document.execCommand('insertText', false, t)
         })
       }
       return cellEl
@@ -239,7 +287,8 @@ class TableWidget extends WidgetType {
       addCol.textContent = '+'
       addCol.title = 'Добавить столбец справа'
       addCol.onmousedown = (e) => {
-        e.preventDefault()
+        e.preventDefault() // сначала фиксируем текущие правки ячеек
+        this.commitTable(view, wrap)
         this.addColumn(view)
       }
       rowBox.appendChild(addCol)
@@ -253,6 +302,7 @@ class TableWidget extends WidgetType {
       addRow.title = 'Добавить строку снизу'
       addRow.onmousedown = (e) => {
         e.preventDefault()
+        this.commitTable(view, wrap)
         this.addRow(view)
       }
       wrap.appendChild(addRow)
@@ -265,101 +315,14 @@ class TableWidget extends WidgetType {
   }
 }
 
-// Открытый сейчас редактор ячейки — чтобы зафиксировать его перед открытием
-// другого (клик в соседнюю ячейку не должен терять введённое).
-let activeCellCommit: (() => void) | null = null
-
-// Плавающий редактор ячейки: поле ввода в document.body поверх ячейки. Живёт
-// ВНЕ contentDOM редактора, поэтому CM не отбирает у него фокус. Пишет значение
-// в markdown по Enter/blur/Tab и при открытии другой ячейки; растёт по вводу.
-function openCellEditor(
-  view: EditorView,
-  blockStart: number,
-  rowInLines: number,
-  cellIndex: number,
-  rect: DOMRect,
-  write: (value: string) => void
-) {
-  activeCellCommit?.() // сохранить ранее открытую ячейку, если была
-
-  // Текущий текст ячейки читаем из живого документа (после возможной пересборки).
-  const lineNo = view.state.doc.lineAt(blockStart).number + rowInLines
-  const initial =
-    lineNo <= view.state.doc.lines ? (parseCells(view.state.doc.line(lineNo).text)[cellIndex]?.text ?? '') : ''
-
-  const input = document.createElement('input')
-  input.className = 'cm-cell-editor'
-  input.value = initial
-  input.style.left = `${rect.left}px`
-  input.style.top = `${rect.top}px`
-  input.style.height = `${rect.height}px`
-
-  // Автоширина: не уже ячейки и не уже удобного минимума, дальше растёт по тексту.
-  const grow = () => {
-    input.style.width = '0'
-    input.style.width = `${Math.min(560, Math.max(140, rect.width, input.scrollWidth + 4))}px`
-  }
-  input.addEventListener('input', grow)
-
-  let done = false
-  const finish = (commit: boolean, moveTo?: { row: number; col: number }) => {
-    if (done) return
-    done = true
-    if (activeCellCommit === commitThis) activeCellCommit = null
-    input.remove()
-    if (commit) write(input.value)
-    if (moveTo) {
-      // После записи виджет пересобрался — ищем соседнюю ячейку в новом DOM.
-      requestAnimationFrame(() => {
-        const next = view.dom.querySelector<HTMLElement>(
-          `.cm-td-edit[data-cell="${moveTo.row}:${moveTo.col}"]`
-        )
-        next?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
-      })
-    } else if (commit) {
-      view.focus()
-    }
-  }
-  const commitThis = () => finish(true)
-  activeCellCommit = commitThis
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      finish(true)
-    } else if (e.key === 'Escape') {
-      e.preventDefault()
-      finish(false)
-    } else if (e.key === 'Tab') {
-      e.preventDefault()
-      finish(true, { row: rowInLines, col: cellIndex + (e.shiftKey ? -1 : 1) })
-    }
-  })
-  document.body.appendChild(input)
-  grow()
-  // Снимаем фокус с contentDOM — иначе CM по selectionchange вернёт выделение
-  // себе и закроет редактор.
-  view.contentDOM.blur()
-  input.focus()
-  input.select()
-  // Со следующего кадра: (1) если предыдущая ячейка при сохранении расширила
-  // таблицу, переносим редактор на актуальную позицию ячейки; (2) отбиваем
-  // транзитный перехват фокуса; (3) вешаем blur→commit (клик мимо сохраняет).
-  requestAnimationFrame(() => {
-    if (done) return
-    const live = view.dom.querySelector<HTMLElement>(
-      `.cm-td-edit[data-cell="${rowInLines}:${cellIndex}"]`
-    )
-    if (live) {
-      const r = live.getBoundingClientRect()
-      input.style.left = `${r.left}px`
-      input.style.top = `${r.top}px`
-      input.style.height = `${r.height}px`
-      if (parseFloat(input.style.width) < r.width) input.style.width = `${r.width}px`
-    }
-    if (document.activeElement !== input) input.focus()
-    input.addEventListener('blur', () => finish(true))
-  })
+/** Поставить каретку в конец contenteditable-элемента. */
+function placeCaretEnd(el: HTMLElement) {
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  const sel = window.getSelection()
+  sel?.removeAllRanges()
+  sel?.addRange(range)
 }
 
 // Обходим весь документ (не только видимую область): блочные декорации таблиц
